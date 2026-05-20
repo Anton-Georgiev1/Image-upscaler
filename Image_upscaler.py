@@ -40,7 +40,7 @@ class ImageUpscalerApp(ctk.CTk):
         # Model Selection
         self.model_label = ctk.CTkLabel(self.sidebar_frame, text="Model:", anchor="w")
         self.model_label.grid(row=2, column=0, padx=20, pady=(10, 0))
-        self.model_option = ctk.CTkOptionMenu(self.sidebar_frame, values=["EDSR", "ESPCN", "FSRCNN", "LapSRN"])
+        self.model_option = ctk.CTkOptionMenu(self.sidebar_frame, values=["Real-ESRGAN", "EDSR", "ESPCN", "FSRCNN", "LapSRN"])
         self.model_option.grid(row=3, column=0, padx=20, pady=10)
 
         # Scale Selection
@@ -59,7 +59,7 @@ class ImageUpscalerApp(ctk.CTk):
         # Appearance Mode
         self.appearance_mode_label = ctk.CTkLabel(self.sidebar_frame, text="Appearance Mode:", anchor="w")
         self.appearance_mode_label.grid(row=9, column=0, padx=20, pady=(10, 0))
-        self.appearance_mode_optionemenu = ctk.CTkOptionMenu(self.sidebar_frame, values=["System", "Light", "Dark"],
+        self.appearance_mode_optionemenu = ctk.CTkOptionMenu(self.sidebar_frame, values=["Light", "Dark"],
                                                                        command=self.change_appearance_mode)
         self.appearance_mode_optionemenu.grid(row=10, column=0, padx=20, pady=(10, 20))
 
