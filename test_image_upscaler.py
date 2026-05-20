@@ -104,5 +104,16 @@ def test_upscale_ai_path(
     mock_loader.return_value.load_from_file.assert_called_once()
     mock_to_tensor.return_value.assert_called()
 
+def test_upscale_progress_callback(engine: UpscalerEngine, dummy_image: str) -> None:
+    """Test if progress callback is called during upscaling."""
+    progress_calls = []
+    def callback(pct):
+        progress_calls.append(pct)
+        
+    engine.upscale(dummy_image, "Lanczos (Fast CPU)", "2x", progress_callback=callback)
+    
+    assert len(progress_calls) > 0
+    assert progress_calls[-1] == 1.0
+
 if __name__ == "__main__":
     pytest.main([__file__])

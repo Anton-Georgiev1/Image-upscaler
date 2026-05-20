@@ -43,12 +43,20 @@ class UpscalerEngine:
         self.ai_model = model.to(self.device).eval()
         return self.ai_model
 
-    def _process_with_tiling(self, img_tensor, model, scale=4, tile_size=256, tile_pad=16):
+    def _process_with_tiling(self, img_tensor, model, scale=4, tile_size=256, tile_pad=16, progress_callback=None):
         """Processes the image in small chunks to prevent VRAM crashes on 4K bounds."""
         b, c, h, w = img_tensor.shape
         out_h, out_w = h * scale, w * scale
-        out_tensor = torch.zeros((b, c, out_h, out_w), device=self.device)
         
+        # FIX: Create out_tensor on CPU to save VRAM for the AI model processing
+        # This prevents OOM when merging very large images (e.g. 16K outputs)
+        out_tensor = torch.zeros((b, c, out_h, out_w), device="cpu")
+        
+        num_tiles_y = math.ceil(h / tile_size)
+        num_tiles_x = math.ceil(w / tile_size)
+        total_tiles = max(1, num_tiles_y * num_tiles_x)
+        processed_tiles = 0
+
         for y in range(0, h, tile_size):
             for x in range(0, w, tile_size):
                 y_start = max(0, y - tile_pad)
@@ -78,13 +86,17 @@ class UpscalerEngine:
                                           tile_y_offset : tile_y_offset + valid_h, 
                                           tile_x_offset : tile_x_offset + valid_w]
                 
-                # Merge into final output canvas
+                # Merge into final output canvas (moves from GPU to CPU here)
                 out_y, out_x = y * scale, x * scale
-                out_tensor[:, :, out_y : out_y + valid_h, out_x : out_x + valid_w] = valid_out_tile
+                out_tensor[:, :, out_y : out_y + valid_h, out_x : out_x + valid_w] = valid_out_tile.cpu()
+                
+                processed_tiles += 1
+                if progress_callback:
+                    progress_callback(processed_tiles / total_tiles)
                 
         return out_tensor
 
-    def _upscale_ai(self, path):
+    def _upscale_ai(self, path, progress_callback=None):
         """Converts to tensor, runs PyTorch inference, converts back to Image."""
         img = Image.open(path).convert("RGB")
         img_tensor = ToTensor()(img).unsqueeze(0).to(self.device)
@@ -92,8 +104,8 @@ class UpscalerEngine:
         model = self._init_ai_model()
         scale = model.scale
         
-        out_tensor = self._process_with_tiling(img_tensor, model, scale=scale)
-        out_img = ToPILImage()(out_tensor.squeeze(0).cpu().clamp(0, 1))
+        out_tensor = self._process_with_tiling(img_tensor, model, scale=scale, progress_callback=progress_callback)
+        out_img = ToPILImage()(out_tensor.squeeze(0).clamp(0, 1))
         
         # Free up memory safely
         if self.device.type == "cuda":
@@ -101,7 +113,7 @@ class UpscalerEngine:
             
         return out_img
 
-    def upscale(self, input_path: str, model_type: str, scale_val: str) -> Image.Image:
+    def upscale(self, input_path: str, model_type: str, scale_val: str, progress_callback=None) -> Image.Image:
         if not Path(input_path).exists():
             raise ValueError("Input file not found.")
 
@@ -121,16 +133,19 @@ class UpscalerEngine:
 
         # Execution Phase
         if ai_scale <= 1:
+            if progress_callback: progress_callback(1.0)
             result = img
         elif self.has_ai and "RealESRGAN" in model_type:
             # AI outputs native 4x 
-            result = self._upscale_ai(input_path)
+            result = self._upscale_ai(input_path, progress_callback=progress_callback)
             
             # Supersampling: If user selected 2x/3x, we scale the AI 4x result BACK down for sharp quality
             if not is_4k and ai_scale < 4:
                 result = result.resize((int(w * ai_scale), int(h * ai_scale)), Image.Resampling.LANCZOS)
         else:
+            if progress_callback: progress_callback(0.5)
             result = self._upscale_pil(input_path, math.ceil(ai_scale))
+            if progress_callback: progress_callback(1.0)
 
         # Precisely fit to 4K Bounds if requested
         if is_4k and ratio > 1.0:
@@ -223,8 +238,11 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.lbl_preview.dnd_bind('<<Drop>>', self.handle_drop)
 
         self.progress = ctk.CTkProgressBar(self.main_view)
-        self.progress.grid(row=1, column=0, padx=50, pady=(0, 30), sticky="ew")
+        self.progress.grid(row=1, column=0, padx=50, pady=(0, 5), sticky="ew")
         self.progress.set(0)
+
+        self.lbl_status = ctk.CTkLabel(self.main_view, text="Ready", font=ctk.CTkFont(size=12))
+        self.lbl_status.grid(row=2, column=0, pady=(0, 20))
 
     def select_image(self):
         path = filedialog.askopenfilename(filetypes=[("Images", "*.jpg *.jpeg *.png *.webp *.bmp")])
@@ -272,21 +290,37 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.btn_run.configure(state="disabled")
         self.btn_select.configure(state="disabled")
-        self.progress.start()
+        self.btn_save.configure(state="disabled")
         
-        threading.Thread(target=self._process, args=(model, scale_val), daemon=True).start()
+        self.progress.set(0)
+        self.lbl_status.configure(text="Initializing AI Engine...")
+        
+        def progress_callback(pct):
+            # Use self.after to update UI from the background thread safely
+            self.after(0, lambda: self._update_progress_ui(pct))
 
-    def _process(self, model, scale_val):
+        threading.Thread(target=self._process, args=(model, scale_val, progress_callback), daemon=True).start()
+
+    def _update_progress_ui(self, pct):
+        self.progress.set(pct)
+        self.lbl_status.configure(text=f"Processing: {int(pct * 100)}%")
+
+    def _process(self, model, scale_val, progress_callback):
         try:
-            self.output_image = self.engine.upscale(self.input_path, model, scale_val)
+            self.output_image = self.engine.upscale(self.input_path, model, scale_val, progress_callback=progress_callback)
             self.after(0, self._finish)
         except Exception as e:
-            self.after(0, lambda: messagebox.showerror("Error", f"Upscale failed: {e}"))
+            # Enhanced error reporting
+            err_msg = str(e)
+            if "out of memory" in err_msg.lower():
+                err_msg = "GPU Out of Memory! Try a smaller scale or check if other apps are using VRAM."
+            
+            self.after(0, lambda: messagebox.showerror("Upscale Error", f"Failed: {err_msg}"))
             self.after(0, self._reset_ui)
 
     def _finish(self):
-        self.progress.stop()
         self.progress.set(1)
+        self.lbl_status.configure(text="Complete! (100%)")
         self.show_preview(self.output_image)
         self.btn_run.configure(state="normal")
         self.btn_select.configure(state="normal")
@@ -294,8 +328,8 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         messagebox.showinfo("Success", "Upscaling complete!")
 
     def _reset_ui(self):
-        self.progress.stop()
         self.progress.set(0)
+        self.lbl_status.configure(text="Ready")
         self.btn_run.configure(state="normal")
         self.btn_select.configure(state="normal")
 
