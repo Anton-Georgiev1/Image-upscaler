@@ -6,19 +6,14 @@ import cv2
 import numpy as np
 from PIL import Image
 from pathlib import Path
-
-import cv2
-import numpy as np
-from PIL import Image
-from pathlib import Path
+import sys
 
 try:
     import torch
-    from realesrgan import RealESRGANer
-    from basicsr.archs.rrdbnet_arch import RRDBNet
-    HAS_TORCH = True
+    from super_image import EdsrModel, ImageLoader
+    HAS_SUPER_IMAGE = True
 except ImportError:
-    HAS_TORCH = False
+    HAS_SUPER_IMAGE = False
 
 class UpscalerEngine:
     """Handles image upscaling using AI models or high-quality interpolation."""
@@ -31,6 +26,9 @@ class UpscalerEngine:
             models_dir: Directory where the pre-trained model files are stored.
         """
         self.models_dir = Path(models_dir)
+        self.has_super_image = HAS_SUPER_IMAGE
+        self.has_torch = HAS_SUPER_IMAGE or 'torch' in sys.modules
+        
         self.has_dnn_sr = False
         try:
             self.sr = cv2.dnn_superres.DnnSuperResImpl_create()
@@ -38,7 +36,6 @@ class UpscalerEngine:
         except AttributeError:
             self.sr = None
         
-        self.has_torch = HAS_TORCH
         self._ensure_models_dir()
 
     def _ensure_models_dir(self) -> None:
@@ -49,51 +46,41 @@ class UpscalerEngine:
     def upscale_image(
         self, 
         input_path: str, 
-        model_name: str = "edsr", 
+        model_name: str = "real-esrgan", 
         scale: int = 4
     ) -> Image.Image:
         """
         Upscale an image using the specified model and scale.
+        Only supports Real-ESRGAN and EDSR (HD).
         """
-        # Load image with OpenCV for DNN/Torch, PIL for fallback
-        if model_name.lower() == "realesrgan":
+        if not Path(input_path).exists():
+            raise ValueError(f"Input image file does not exist: {input_path}")
+            
+        model_name = model_name.lower()
+        
+        # Priority 1: Real-ESRGAN (The "Best" HD model)
+        if "real-esrgan" in model_name:
             return self._upscale_realesrgan(input_path, scale)
             
-        img = cv2.imread(input_path)
-        if img is None:
-            raise ValueError(f"Could not read image at {input_path}")
-
-        model_path = self.models_dir / f"{model_name.upper()}_x{scale}.pb"
-
-        if self.has_dnn_sr and model_path.exists():
-            try:
-                self.sr.readModel(str(model_path))
-                self.sr.setModel(model_name.lower(), scale)
-                result = self.sr.upsample(img)
-                result_rgb = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
-                return Image.fromarray(result_rgb)
-            except Exception as e:
-                print(f"AI Upscaling failed: {e}. Falling back to PIL Lanczos.")
+        # Priority 2: EDSR (HD)
+        if self.has_super_image and "edsr" in model_name:
+            return self._upscale_super_image(input_path, scale)
         
-        # Fallback to PIL Lanczos
-        pil_img = Image.open(input_path)
-        width, height = pil_img.size
-        new_size = (width * scale, height * scale)
-        return pil_img.resize(new_size, Image.Resampling.LANCZOS)
+        # Priority 3: PIL Fallback (if AI fails or unsupported)
+        return self._pil_fallback(input_path, scale)
 
     def _upscale_realesrgan(self, input_path: str, scale: int) -> Image.Image:
-        """Upscale using Real-ESRGAN (requires torch and realesrgan)."""
-        if not self.has_torch:
-            print("Real-ESRGAN requires 'torch' and 'realesrgan' packages. Falling back.")
-            return self.upscale_image(input_path, "pil", scale)
-
+        """Upscale using the best available Real-ESRGAN implementation."""
         try:
-            # Note: This is a simplified integration. 
-            # In a real scenario, we'd need the .pth model file.
+            from realesrgan import RealESRGANer
+            from basicsr.archs.rrdbnet_arch import RRDBNet
+            
             model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=scale)
+            model_path = self.models_dir / f"RealESRGAN_x{scale}plus.pth"
+            
             upsampler = RealESRGANer(
                 scale=scale,
-                model_path=str(self.models_dir / f"RealESRGAN_x{scale}.pth"),
+                model_path=str(model_path),
                 model=model,
                 tile=0,
                 tile_pad=10,
@@ -111,14 +98,41 @@ class UpscalerEngine:
                 
             return Image.fromarray(output_rgb)
         except Exception as e:
-            print(f"Real-ESRGAN failed: {e}. Falling back.")
-            return self.upscale_image(input_path, "pil", scale)
+            print(f"Real-ESRGAN failed: {e}. Falling back to EDSR (HD).")
+            return self._upscale_super_image(input_path, scale)
+
+    def _upscale_super_image(self, input_path: str, scale: int) -> Image.Image:
+        """Upscale using super-image (PyTorch)."""
+        if not self.has_super_image:
+            return self._pil_fallback(input_path, scale)
+            
+        try:
+            image = Image.open(input_path)
+            model = EdsrModel.from_pretrained('eugenesiow/edsr-base', scale=scale)
+            inputs = ImageLoader.load_image(image)
+            preds = model(inputs)
+            return self._tensor_to_pil(preds)
+        except Exception as e:
+            print(f"Super-image upscaling failed: {e}. Falling back.")
+            return self._pil_fallback(input_path, scale)
+
+    def _pil_fallback(self, input_path: str, scale: int) -> Image.Image:
+        """High-quality PIL Lanczos fallback."""
+        pil_img = Image.open(input_path)
+        width, height = pil_img.size
+        new_size = (width * scale, height * scale)
+        return pil_img.resize(new_size, Image.Resampling.LANCZOS)
+
+    def _tensor_to_pil(self, tensor) -> Image.Image:
+        """Convert a torch tensor from super-image to a PIL Image."""
+        from torchvision.transforms import ToPILImage
+        tensor = tensor.cpu().detach().squeeze(0)
+        return ToPILImage()(tensor)
 
 def test_engine() -> None:
-    """Simple test to verify engine initialization and fallback."""
+    """Simple test to verify engine initialization."""
     engine = UpscalerEngine()
     print("Engine initialized successfully.")
-    # More comprehensive tests will be added in a separate test file.
 
 if __name__ == "__main__":
     test_engine()
