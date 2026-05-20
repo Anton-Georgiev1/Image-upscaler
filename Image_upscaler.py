@@ -49,8 +49,11 @@ class UpscalerEngine:
         b, c, h, w = img_tensor.shape
         out_h, out_w = h * scale, w * scale
         
-        # FIX: Create out_tensor on CPU to save VRAM for the AI model processing
-        # This prevents OOM when merging very large images (e.g. 16K outputs)
+        # Optimization: Use one less core than available to keep system responsive
+        if self.device.type == "cpu":
+            torch.set_num_threads(max(1, os.cpu_count() - 1))
+
+        # Create out_tensor on CPU to save VRAM for the AI model processing
         out_tensor = torch.zeros((b, c, out_h, out_w), device="cpu")
         
         num_tiles_y = math.ceil(h / tile_size)
@@ -58,42 +61,39 @@ class UpscalerEngine:
         total_tiles = max(1, num_tiles_y * num_tiles_x)
         processed_tiles = 0
 
-        for y in range(0, h, tile_size):
-            for x in range(0, w, tile_size):
-                y_start = max(0, y - tile_pad)
-                x_start = max(0, x - tile_pad)
-                y_end = min(h, y + tile_size + tile_pad)
-                x_end = min(w, x + tile_size + tile_pad)
-                
-                # Extract padded input tile
-                in_tile = img_tensor[:, :, y_start:y_end, x_start:x_end]
-                
-                with torch.no_grad():
+        # Use inference_mode for better performance and less memory usage
+        with torch.inference_mode():
+            for y in range(0, h, tile_size):
+                for x in range(0, w, tile_size):
+                    y_start = max(0, y - tile_pad)
+                    x_start = max(0, x - tile_pad)
+                    y_end = min(h, y + tile_size + tile_pad)
+                    x_end = min(w, x + tile_size + tile_pad)
+                    
+                    in_tile = img_tensor[:, :, y_start:y_end, x_start:x_end]
+                    
                     if self.device.type == "cuda":
-                        with torch.autocast(device_type="cuda"): # Speedup with Mixed Precision
+                        with torch.autocast(device_type="cuda"):
                             out_tile = model(in_tile)
                     else:
                         out_tile = model(in_tile)
-                
-                # Offset mapping for pasting valid data back
-                tile_y_offset = (y - y_start) * scale
-                tile_x_offset = (x - x_start) * scale
-                
-                valid_h = min(tile_size, h - y) * scale
-                valid_w = min(tile_size, w - x) * scale
-                
-                # Crop away the padding
-                valid_out_tile = out_tile[:, :, 
-                                          tile_y_offset : tile_y_offset + valid_h, 
-                                          tile_x_offset : tile_x_offset + valid_w]
-                
-                # Merge into final output canvas (moves from GPU to CPU here)
-                out_y, out_x = y * scale, x * scale
-                out_tensor[:, :, out_y : out_y + valid_h, out_x : out_x + valid_w] = valid_out_tile.cpu()
-                
-                processed_tiles += 1
-                if progress_callback:
-                    progress_callback(processed_tiles / total_tiles)
+                    
+                    tile_y_offset = (y - y_start) * scale
+                    tile_x_offset = (x - x_start) * scale
+                    
+                    valid_h = min(tile_size, h - y) * scale
+                    valid_w = min(tile_size, w - x) * scale
+                    
+                    valid_out_tile = out_tile[:, :, 
+                                            tile_y_offset : tile_y_offset + valid_h, 
+                                            tile_x_offset : tile_x_offset + valid_w]
+                    
+                    out_y, out_x = y * scale, x * scale
+                    out_tensor[:, :, out_y : out_y + valid_h, out_x : out_x + valid_w] = valid_out_tile.cpu()
+                    
+                    processed_tiles += 1
+                    if progress_callback:
+                        progress_callback(processed_tiles / total_tiles)
                 
         return out_tensor
 
@@ -249,8 +249,14 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.opt_theme.pack(padx=20, pady=(5, 30), fill="x", side="bottom")
 
         # System Monitor
+        self.process = psutil.Process(os.getpid())
         self.lbl_cpu = ctk.CTkLabel(self.sidebar, text="System Load: 0%", anchor="w", font=ctk.CTkFont(size=12))
         self.lbl_cpu.pack(padx=20, pady=(10, 0), fill="x", side="bottom")
+        
+        device_name = "GPU (CUDA)" if self.engine.device.type == "cuda" else "CPU (Standard)"
+        self.lbl_device = ctk.CTkLabel(self.sidebar, text=f"Active Device: {device_name}", anchor="w", font=ctk.CTkFont(size=11), text_color="gray")
+        self.lbl_device.pack(padx=20, pady=(0, 30), fill="x", side="bottom")
+        
         self._update_cpu_usage()
 
         # Main View
@@ -324,6 +330,12 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.progress.set(0)
         self.lbl_status.configure(text="Initializing AI Engine...")
         
+        # Optimization: Set process priority to BELOW_NORMAL so the OS stays responsive
+        try:
+            self.process.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+        except:
+            pass
+
         def progress_callback(pct):
             # Use self.after to update UI from the background thread safely
             self.after(0, lambda: self._update_progress_ui(pct))
@@ -348,6 +360,12 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             self.after(0, self._reset_ui)
 
     def _finish(self):
+        # Restore normal priority
+        try:
+            self.process.nice(psutil.NORMAL_PRIORITY_CLASS)
+        except:
+            pass
+            
         self.progress.set(1)
         self.lbl_status.configure(text="Complete! (100%)")
         self.show_preview(self.output_image)
@@ -357,6 +375,12 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         messagebox.showinfo("Success", "Upscaling complete!")
 
     def _reset_ui(self):
+        # Restore normal priority
+        try:
+            self.process.nice(psutil.NORMAL_PRIORITY_CLASS)
+        except:
+            pass
+            
         self.progress.set(0)
         self.lbl_status.configure(text="Ready")
         self.btn_run.configure(state="normal")
