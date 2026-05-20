@@ -40,7 +40,7 @@ class ImageUpscalerApp(ctk.CTk):
         # Model Selection
         self.model_label = ctk.CTkLabel(self.sidebar_frame, text="Model:", anchor="w")
         self.model_label.grid(row=2, column=0, padx=20, pady=(10, 0))
-        self.model_option = ctk.CTkOptionMenu(self.sidebar_frame, values=["EDSR (HD)", "MSRN (HD)", "EDSR", "ESPCN", "FSRCNN", "LapSRN"])
+        self.model_option = ctk.CTkOptionMenu(self.sidebar_frame, values=["Real-ESRGAN", "EDSR (HD)"])
         self.model_option.grid(row=3, column=0, padx=20, pady=10)
 
         # Scale Selection
