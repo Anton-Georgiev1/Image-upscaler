@@ -5,39 +5,29 @@ import os
 import threading
 import math
 from pathlib import Path
-import cv2
-import numpy as np
 import urllib.request
-import sys
 
-# --- Fix for 'basicsr' compatibility with newer torchvision versions ---
-try:
-    import torchvision.transforms.functional as F
-    sys.modules['torchvision.transforms.functional_tensor'] = F
-except ImportError:
-    pass
+# --- Modern AI Engine Integration (Spandrel) ---
+# Removed try/except so the app explicitly requires AI packages to run
+import torch
+from torchvision.transforms import ToTensor, ToPILImage
+from spandrel import ModelLoader
 
-# --- AI Engine Integration (Real-ESRGAN) ---
-try:
-    import torch
-    from basicsr.archs.rrdbnet_arch import RRDBNet
-    from realesrgan import RealESRGANer
-    HAS_AI = True
-except ImportError:
-    HAS_AI = False
-
+HAS_AI = True
 
 class UpscalerEngine:
-    """Core logic for Real-ESRGAN upscaling & precise 4K scaling."""
+    """Core logic for Real-ESRGAN using modern Spandrel."""
     
     def __init__(self):
         self.has_ai = HAS_AI
-        self.realesrgan_model = None
+        self.ai_model = None
+        # Safely assign GPU if available, else CPU
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def _init_realesrgan(self):
-        """Initializes and caches the RealESRGAN model."""
-        if self.realesrgan_model is not None:
-            return self.realesrgan_model
+    def _init_ai_model(self):
+        """Downloads (if missing) and caches the RealESRGAN model directly."""
+        if self.ai_model is not None:
+            return self.ai_model
             
         weight_path = "models/RealESRGAN_x4plus.pth"
         if not os.path.exists(weight_path):
@@ -47,86 +37,114 @@ class UpscalerEngine:
             urllib.request.urlretrieve(url, weight_path)
             print("Download complete.")
             
-        # The x4plus model is an RRDBNet structure scaled by 4x
-        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
+        # Spandrel natively reads the architecture from the .pth file
+        model = ModelLoader().load_from_file(weight_path)
+        self.ai_model = model.to(self.device).eval()
+        return self.ai_model
+
+    def _process_with_tiling(self, img_tensor, model, scale=4, tile_size=256, tile_pad=16):
+        """Processes the image in small chunks to prevent VRAM crashes on 4K bounds."""
+        b, c, h, w = img_tensor.shape
+        out_h, out_w = h * scale, w * scale
+        out_tensor = torch.zeros((b, c, out_h, out_w), device=self.device)
         
-        self.realesrgan_model = RealESRGANer(
-            scale=4,
-            model_path=weight_path,
-            model=model,
-            tile=256,          # Important: Tiling prevents VRAM crashes on 4K resolutions
-            tile_pad=10,
-            pre_pad=0,
-            half=torch.cuda.is_available() # Uses FP16 for speed if Nvidia GPU is available
-        )
-        return self.realesrgan_model
+        for y in range(0, h, tile_size):
+            for x in range(0, w, tile_size):
+                y_start = max(0, y - tile_pad)
+                x_start = max(0, x - tile_pad)
+                y_end = min(h, y + tile_size + tile_pad)
+                x_end = min(w, x + tile_size + tile_pad)
+                
+                # Extract padded input tile
+                in_tile = img_tensor[:, :, y_start:y_end, x_start:x_end]
+                
+                with torch.no_grad():
+                    if self.device.type == "cuda":
+                        with torch.autocast(device_type="cuda"): # Speedup with Mixed Precision
+                            out_tile = model(in_tile)
+                    else:
+                        out_tile = model(in_tile)
+                
+                # Offset mapping for pasting valid data back
+                tile_y_offset = (y - y_start) * scale
+                tile_x_offset = (x - x_start) * scale
+                
+                valid_h = min(tile_size, h - y) * scale
+                valid_w = min(tile_size, w - x) * scale
+                
+                # Crop away the padding
+                valid_out_tile = out_tile[:, :, 
+                                          tile_y_offset : tile_y_offset + valid_h, 
+                                          tile_x_offset : tile_x_offset + valid_w]
+                
+                # Merge into final output canvas
+                out_y, out_x = y * scale, x * scale
+                out_tensor[:, :, out_y : out_y + valid_h, out_x : out_x + valid_w] = valid_out_tile
+                
+        return out_tensor
+
+    def _upscale_ai(self, path):
+        """Converts to tensor, runs PyTorch inference, converts back to Image."""
+        img = Image.open(path).convert("RGB")
+        img_tensor = ToTensor()(img).unsqueeze(0).to(self.device)
+        
+        model = self._init_ai_model()
+        scale = model.scale
+        
+        out_tensor = self._process_with_tiling(img_tensor, model, scale=scale)
+        out_img = ToPILImage()(out_tensor.squeeze(0).cpu().clamp(0, 1))
+        
+        # Free up memory safely
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+            
+        return out_img
 
     def upscale(self, input_path: str, model_type: str, scale_val: str) -> Image.Image:
-        """Process the image based on requested scale string and 4K bounds."""
         if not Path(input_path).exists():
             raise ValueError("Input file not found.")
 
         is_4k = (scale_val == "4K (Ultra HD)")
 
-        # Determine original dimensions
         with Image.open(input_path) as img:
             w, h = img.size
             img = img.convert("RGB")
 
-        # Calculate Needed AI Scale Multiplier
+        # Determine AI constraints based on user choice
         if is_4k:
             target_w, target_h = 3840, 2160
             ratio = min(target_w / w, target_h / h)
-            
-            if ratio <= 1.0:
-                ai_scale = 1  # Already 4K or bigger
-            else:
-                ai_scale = math.ceil(ratio)
-                if ai_scale > 4: 
-                    ai_scale = 4  # Cap AI upscale at 4x to avoid crashing
+            ai_scale = 1 if ratio <= 1.0 else ratio
         else:
             ai_scale = int(scale_val.replace("x", ""))
 
-        # Execute Upscale
-        if ai_scale == 1:
+        # Execution Phase
+        if ai_scale <= 1:
             result = img
         elif self.has_ai and "RealESRGAN" in model_type:
-            result = self._upscale_realesrgan(input_path, ai_scale)
+            # AI outputs native 4x 
+            result = self._upscale_ai(input_path)
+            
+            # Supersampling: If user selected 2x/3x, we scale the AI 4x result BACK down for sharp quality
+            if not is_4k and ai_scale < 4:
+                result = result.resize((int(w * ai_scale), int(h * ai_scale)), Image.Resampling.LANCZOS)
         else:
-            result = self._upscale_pil(input_path, ai_scale)
+            result = self._upscale_pil(input_path, math.ceil(ai_scale))
 
-        # Final Pass: Shrink to precisely 4K if Ultra HD was requested
-        if is_4k:
+        # Precisely fit to 4K Bounds if requested
+        if is_4k and ratio > 1.0:
             result = self._resize_to_target(result, 3840, 2160)
 
         return result
 
     def _resize_to_target(self, img: Image.Image, target_w: int, target_h: int) -> Image.Image:
-        """Resizes safely to strict 4K limits maintaining original aspect ratio."""
+        """Lock into exact target dimensions without losing aspect ratio."""
         w, h = img.size
         ratio = min(target_w / w, target_h / h)
         new_size = (max(1, int(w * ratio)), max(1, int(h * ratio)))
         return img.resize(new_size, Image.Resampling.LANCZOS)
 
-    def _upscale_realesrgan(self, path, scale):
-        try:
-            upsampler = self._init_realesrgan()
-            
-            # RealESRGAN expects BGR format from OpenCV
-            img_cv2 = cv2.imread(path, cv2.IMREAD_COLOR)
-            
-            # The 'outscale' parameter handles our dynamic scaling multiplier directly
-            output_cv2, _ = upsampler.enhance(img_cv2, outscale=scale)
-            
-            # Convert back to Pillow RGB
-            output_cv2 = cv2.cvtColor(output_cv2, cv2.COLOR_BGR2RGB)
-            return Image.fromarray(output_cv2)
-        except Exception as e:
-            print(f"RealESRGAN error: {e}")
-            return self._upscale_pil(path, scale)
-
     def _upscale_pil(self, path, scale):
-        """Fallback CPU scaling using Lanczos."""
         img = Image.open(path).convert("RGB")
         new_size = (int(img.width * scale), int(img.height * scale))
         return img.resize(new_size, Image.Resampling.LANCZOS)
@@ -137,7 +155,7 @@ class ImageUpscalerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Real-ESRGAN Image Upscaler")
+        self.title("Real-ESRGAN Upscaler (Spandrel Engine)")
         self.geometry("1100x750")
         
         self.engine = UpscalerEngine()
@@ -161,9 +179,7 @@ class ImageUpscalerApp(ctk.CTk):
         self.lbl_model = ctk.CTkLabel(self.sidebar, text="Upscale Model:", anchor="w")
         self.lbl_model.pack(padx=20, pady=(20, 0), fill="x")
         
-        model_options = ["Lanczos (Fast CPU)"]
-        if self.engine.has_ai:
-            model_options.insert(0, "RealESRGAN (AI HD)")
+        model_options = ["RealESRGAN (AI HD)", "Lanczos (Fast CPU)"]
             
         self.opt_model = ctk.CTkOptionMenu(self.sidebar, values=model_options)
         self.opt_model.pack(padx=20, pady=10, fill="x")
@@ -171,7 +187,6 @@ class ImageUpscalerApp(ctk.CTk):
         self.lbl_scale = ctk.CTkLabel(self.sidebar, text="Scale Factor:", anchor="w")
         self.lbl_scale.pack(padx=20, pady=(10, 0), fill="x")
         
-        # 4K / Ultra HD Integrated
         self.opt_scale = ctk.CTkOptionMenu(self.sidebar, values=["2x", "3x", "4x", "4K (Ultra HD)"])
         self.opt_scale.pack(padx=20, pady=10, fill="x")
 
@@ -227,8 +242,8 @@ class ImageUpscalerApp(ctk.CTk):
         model = self.opt_model.get()
         scale_val = self.opt_scale.get() 
         
-        # User feedback if downloading the ~60mb weights for the very first time
-        if "RealESRGAN" in model and not os.path.exists("models/RealESRGAN_x4plus.pth") and self.engine.has_ai:
+        # User feedback during initial weights download
+        if "RealESRGAN" in model and not os.path.exists("models/RealESRGAN_x4plus.pth"):
             self.lbl_preview.configure(text="Downloading AI Weights (~60MB). Please wait...", image="")
             self.update() 
 
