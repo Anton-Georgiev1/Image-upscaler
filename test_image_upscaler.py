@@ -2,13 +2,14 @@ import pytest
 from pathlib import Path
 from PIL import Image
 import numpy as np
-import os
+from unittest.mock import MagicMock, patch
+import torch
 
 # Import the engine from the main file
 from Image_upscaler import UpscalerEngine
 
 @pytest.fixture
-def dummy_image(tmp_path):
+def dummy_image(tmp_path: Path) -> str:
     """Create a small dummy image for testing."""
     img_path = tmp_path / "test_input.png"
     # Create a 10x10 black image
@@ -17,36 +18,91 @@ def dummy_image(tmp_path):
     return str(img_path)
 
 @pytest.fixture
-def engine():
+def engine() -> UpscalerEngine:
     """Initialize the UpscalerEngine."""
     return UpscalerEngine()
 
-def test_engine_initialization(engine):
+def test_engine_initialization(engine: UpscalerEngine) -> None:
     """Test if the engine initializes correctly."""
-    assert hasattr(engine, 'upscale')
-    # Check if AI flag is a boolean (depending on environment)
+    assert hasattr(engine, "upscale")
     assert isinstance(engine.has_ai, bool)
 
-def test_upscale_logic_pil(engine, dummy_image):
+def test_upscale_logic_pil(engine: UpscalerEngine, dummy_image: str) -> None:
     """Test if upscaling (via PIL fallback) works and produces correct dimensions."""
-    scale = 2
-    upscaled_img = engine.upscale(dummy_image, "Lanczos (Standard)", scale)
+    scale_val = "2x"
+    model_type = "Lanczos (Fast CPU)"
+    upscaled_img = engine.upscale(dummy_image, model_type, scale_val)
     
     assert isinstance(upscaled_img, Image.Image)
     assert upscaled_img.width == 20
     assert upscaled_img.height == 20
 
-def test_upscale_invalid_path(engine):
+def test_upscale_invalid_path(engine: UpscalerEngine) -> None:
     """Test that the engine raises ValueError for non-existent files."""
     with pytest.raises(ValueError, match="Input file not found."):
-        engine.upscale("non_existent_file.jpg", "Lanczos (Standard)", 2)
+        engine.upscale("non_existent_file.jpg", "Lanczos (Fast CPU)", "2x")
 
-def test_upscale_dimensions_all_scales(engine, dummy_image):
-    """Verify different scale factors."""
-    for scale in [2, 3, 4]:
-        upscaled_img = engine.upscale(dummy_image, "Lanczos (Standard)", scale)
-        assert upscaled_img.width == 10 * scale
-        assert upscaled_img.height == 10 * scale
+def test_upscale_dimensions_all_scales(engine: UpscalerEngine, dummy_image: str) -> None:
+    """Verify different scale factors for PIL upscaling."""
+    scales = {"2x": 2, "3x": 3, "4x": 4}
+    for scale_str, scale_int in scales.items():
+        upscaled_img = engine.upscale(dummy_image, "Lanczos (Fast CPU)", scale_str)
+        assert upscaled_img.width == 10 * scale_int
+        assert upscaled_img.height == 10 * scale_int
+
+def test_upscale_4k_logic(engine: UpscalerEngine, dummy_image: str) -> None:
+    """Verify 4K targeting logic."""
+    # 4K is 3840x2160. Our dummy is 10x10.
+    # The logic should upscale it to fit within 3840x2160 while maintaining aspect ratio.
+    # Since 10x10 is square, it should become 2160x2160.
+    upscaled_img = engine.upscale(dummy_image, "Lanczos (Fast CPU)", "4K (Ultra HD)")
+    assert upscaled_img.width == 2160
+    assert upscaled_img.height == 2160
+
+@patch("Image_upscaler.ModelLoader")
+@patch("Image_upscaler.ToTensor")
+@patch("Image_upscaler.ToPILImage")
+@patch("os.path.exists")
+def test_upscale_ai_path(
+    mock_exists: MagicMock,
+    mock_to_pil: MagicMock,
+    mock_to_tensor: MagicMock,
+    mock_loader: MagicMock,
+    engine: UpscalerEngine,
+    dummy_image: str
+) -> None:
+    """Test the AI upscaling path using mocks."""
+    # Setup mocks
+    mock_exists.return_value = True
+    
+    mock_model = MagicMock()
+    mock_model.scale = 4
+    mock_model.to.return_value = mock_model
+    mock_model.eval.return_value = mock_model
+    # Mock model call: it takes a tensor and returns a scaled-up tensor
+    def mock_model_call(x: torch.Tensor) -> torch.Tensor:
+        # Simulate 4x upscale
+        return torch.nn.functional.interpolate(x, scale_factor=4, mode='nearest')
+    
+    mock_model.side_effect = mock_model_call    
+    mock_loader.return_value.load_from_file.return_value = mock_model
+    
+    # Mock ToTensor to return a dummy tensor with shape (3, 10, 10)
+    # The implementation calls unsqueeze(0) which will make it (1, 3, 10, 10)
+    mock_tensor = torch.zeros((3, 10, 10))
+    mock_to_tensor.return_value.return_value = mock_tensor
+    
+    # Mock ToPILImage to return a dummy PIL image
+    mock_result_img = Image.new("RGB", (40, 40))
+    mock_to_pil.return_value.return_value = mock_result_img
+    
+    # Execute
+    result = engine.upscale(dummy_image, "RealESRGAN (AI HD)", "4x")
+    
+    # Assertions
+    assert result == mock_result_img
+    mock_loader.return_value.load_from_file.assert_called_once()
+    mock_to_tensor.return_value.assert_called()
 
 if __name__ == "__main__":
     pytest.main([__file__])
