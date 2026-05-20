@@ -5,7 +5,6 @@ import os
 import threading
 import math
 from pathlib import Path
-import urllib.request
 
 # --- Modern AI Engine Integration (Spandrel) ---
 # Removed try/except so the app explicitly requires AI packages to run
@@ -25,17 +24,18 @@ class UpscalerEngine:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def _init_ai_model(self):
-        """Downloads (if missing) and caches the RealESRGAN model directly."""
+        """Loads and caches the RealESRGAN model directly."""
         if self.ai_model is not None:
             return self.ai_model
             
         weight_path = "models/RealESRGAN_x4plus.pth"
+        
+        # Since the auto-download is removed, we explicitly check for the file
         if not os.path.exists(weight_path):
-            print("Downloading RealESRGAN weights (~60MB)...")
-            os.makedirs("models", exist_ok=True)
-            url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
-            urllib.request.urlretrieve(url, weight_path)
-            print("Download complete.")
+            raise FileNotFoundError(
+                f"Model weights not found!\n\n"
+                f"Please place 'RealESRGAN_x4plus.pth' inside the '{os.path.abspath('models')}' folder."
+            )
             
         # Spandrel natively reads the architecture from the .pth file
         model = ModelLoader().load_from_file(weight_path)
@@ -151,11 +151,12 @@ class UpscalerEngine:
 
 
 # --- GUI Application ---
-class ImageUpscalerApp(ctk.CTk):
+class Image_upscaler(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Real-ESRGAN Upscaler (Spandrel Engine)")
+        # Renamed application title
+        self.title("Image_upscaler")
         self.geometry("1100x750")
         
         self.engine = UpscalerEngine()
@@ -170,7 +171,8 @@ class ImageUpscalerApp(ctk.CTk):
         self.sidebar = ctk.CTkFrame(self, width=280, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         
-        self.lbl_title = ctk.CTkLabel(self.sidebar, text="AI Upscaler", font=ctk.CTkFont(size=22, weight="bold"))
+        # Renamed sidebar title
+        self.lbl_title = ctk.CTkLabel(self.sidebar, text="Image_upscaler", font=ctk.CTkFont(size=22, weight="bold"))
         self.lbl_title.pack(pady=(30, 20))
 
         self.btn_select = ctk.CTkButton(self.sidebar, text="Open Image", command=self.select_image, height=40)
@@ -242,10 +244,13 @@ class ImageUpscalerApp(ctk.CTk):
         model = self.opt_model.get()
         scale_val = self.opt_scale.get() 
         
-        # User feedback during initial weights download
+        # Checking for the manual weights file if AI is selected
         if "RealESRGAN" in model and not os.path.exists("models/RealESRGAN_x4plus.pth"):
-            self.lbl_preview.configure(text="Downloading AI Weights (~60MB). Please wait...", image="")
-            self.update() 
+            messagebox.showerror(
+                "Missing Model File", 
+                "The Real-ESRGAN weights were not found.\n\nPlease place 'RealESRGAN_x4plus.pth' in the 'models' folder next to the script."
+            )
+            return
 
         self.btn_run.configure(state="disabled")
         self.btn_select.configure(state="disabled")
@@ -287,5 +292,5 @@ class ImageUpscalerApp(ctk.CTk):
 if __name__ == "__main__":
     ctk.set_appearance_mode("Dark")
     ctk.set_default_color_theme("blue")
-    app = ImageUpscalerApp()
+    app = Image_upscaler()
     app.mainloop()
