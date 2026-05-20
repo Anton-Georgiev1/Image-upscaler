@@ -135,42 +135,54 @@ class UpscalerEngine:
         if not Path(input_path).exists():
             raise ValueError("Input file not found.")
 
-        is_4k = (scale_val == "4K (Ultra HD)")
-
+        # 1. Parse User Intent
+        is_4k_mode = (scale_val == "4K (Ultra HD)")
+        
         img = Image.open(input_path)
         w, h = img.size
-        original_mode = img.mode
-
-        # Determine AI constraints based on user choice
-        if is_4k:
+        
+        # 2. Determine Scale Factors
+        if is_4k_mode:
+            # 4K logic: Fit within 3840x2160 box
             target_w, target_h = 3840, 2160
-            ratio = min(target_w / w, target_h / h)
-            ai_scale = 1 if ratio <= 1.0 else ratio
+            fit_ratio = min(target_w / w, target_h / h)
+            target_scale = 1.0 if fit_ratio <= 1.0 else fit_ratio
         else:
-            ai_scale = int(scale_val.replace("x", ""))
+            # Multiplier logic: 2x, 3x, 4x
+            target_scale = float(scale_val.replace("x", ""))
+            fit_ratio = None # Not used for multipliers
 
-        # Execution Phase
-        if ai_scale <= 1:
+        # 3. Execution Phase
+        if target_scale <= 1.0:
             if progress_callback: progress_callback(1.0)
             result = img
         elif self.has_ai and "RealESRGAN" in model_type:
-            # AI outputs native 4x 
-            # We close the initial img here to save memory since _upscale_ai opens its own
+            # AI always outputs 4x (native model scale)
             img.close()
             result = self._upscale_ai(input_path, progress_callback=progress_callback, perf_mode=perf_mode)
             
-            # Supersampling: If user selected 2x/3x, we scale the AI 4x result BACK down for sharp quality
-            if not is_4k and ai_scale < 4:
-                result = result.resize((int(w * ai_scale), int(h * ai_scale)), Image.Resampling.LANCZOS)
+            # Post-processing: Resize AI 4x result to match User Intent (2x, 3x, or 4K Fit)
+            # If User wanted exactly 4x, we do nothing (AI result is already 4x)
+            if is_4k_mode:
+                # Always resize to the precise 4K fit bounds
+                result = self._resize_to_target(result, 3840, 2160)
+            elif target_scale < 4.0:
+                # Downsample 4x AI result to 2x or 3x for high quality supersampling
+                result = result.resize((int(w * target_scale), int(h * target_scale)), Image.Resampling.LANCZOS)
         else:
+            # CPU/PIL Path
             img.close()
             if progress_callback: progress_callback(0.5)
-            result = self._upscale_pil(input_path, math.ceil(ai_scale))
+            # We scale to the ceil multiplier first, then downsample if it's 4K fit
+            result = self._upscale_pil(input_path, math.ceil(target_scale))
+            
+            if is_4k_mode:
+                result = self._resize_to_target(result, 3840, 2160)
+            elif target_scale < math.ceil(target_scale):
+                # Handle potential non-integer scales if we ever add them
+                result = result.resize((int(w * target_scale), int(h * target_scale)), Image.Resampling.LANCZOS)
+            
             if progress_callback: progress_callback(1.0)
-
-        # Precisely fit to 4K Bounds if requested
-        if is_4k and ratio > 1.0:
-            result = self._resize_to_target(result, 3840, 2160)
 
         return result
 

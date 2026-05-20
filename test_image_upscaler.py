@@ -129,5 +129,18 @@ def test_upscale_preserves_alpha(engine: UpscalerEngine, tmp_path: Path) -> None
     # Check if alpha channel still exists and has correct value at a pixel
     assert upscaled_img.getpixel((0, 0))[3] == 128
 
+def test_upscale_4x_portrait_no_cap(engine: UpscalerEngine, tmp_path: Path) -> None:
+    """Verify that a 1024x1536 image at 4x results in 4096x6144 (no 4K cap)."""
+    img_path = tmp_path / "test_portrait.png"
+    # 1024x1536 portrait image
+    img = Image.new("RGB", (1024, 1536))
+    img.save(img_path)
+    
+    # Test with PIL path for speed/simplicity in this specific logic test
+    result = engine.upscale(str(img_path), "Lanczos (Fast CPU)", "4x")
+    
+    assert result.width == 4096
+    assert result.height == 6144
+
 if __name__ == "__main__":
     pytest.main([__file__])
