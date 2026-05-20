@@ -31,7 +31,7 @@ def test_upscale_logic_pil(engine: UpscalerEngine, dummy_image: str) -> None:
     """Test if upscaling (via PIL fallback) works and produces correct dimensions."""
     scale_val = "2x"
     model_type = "Lanczos (Fast CPU)"
-    upscaled_img = engine.upscale(dummy_image, model_type, scale_val)
+    upscaled_img = engine.upscale(dummy_image, model_type, scale_val, perf_mode="Ultra (Max Speed)")
     
     assert isinstance(upscaled_img, Image.Image)
     assert upscaled_img.width == 20
@@ -40,13 +40,13 @@ def test_upscale_logic_pil(engine: UpscalerEngine, dummy_image: str) -> None:
 def test_upscale_invalid_path(engine: UpscalerEngine) -> None:
     """Test that the engine raises ValueError for non-existent files."""
     with pytest.raises(ValueError, match="Input file not found."):
-        engine.upscale("non_existent_file.jpg", "Lanczos (Fast CPU)", "2x")
+        engine.upscale("non_existent_file.jpg", "Lanczos (Fast CPU)", "2x", perf_mode="Ultra (Max Speed)")
 
 def test_upscale_dimensions_all_scales(engine: UpscalerEngine, dummy_image: str) -> None:
     """Verify different scale factors for PIL upscaling."""
     scales = {"2x": 2, "3x": 3, "4x": 4}
     for scale_str, scale_int in scales.items():
-        upscaled_img = engine.upscale(dummy_image, "Lanczos (Fast CPU)", scale_str)
+        upscaled_img = engine.upscale(dummy_image, "Lanczos (Fast CPU)", scale_str, perf_mode="Ultra (Max Speed)")
         assert upscaled_img.width == 10 * scale_int
         assert upscaled_img.height == 10 * scale_int
 
@@ -55,7 +55,7 @@ def test_upscale_4k_logic(engine: UpscalerEngine, dummy_image: str) -> None:
     # 4K is 3840x2160. Our dummy is 10x10.
     # The logic should upscale it to fit within 3840x2160 while maintaining aspect ratio.
     # Since 10x10 is square, it should become 2160x2160.
-    upscaled_img = engine.upscale(dummy_image, "Lanczos (Fast CPU)", "4K (Ultra HD)")
+    upscaled_img = engine.upscale(dummy_image, "Lanczos (Fast CPU)", "4K (Ultra HD)", perf_mode="Ultra (Max Speed)")
     assert upscaled_img.width == 2160
     assert upscaled_img.height == 2160
 
@@ -97,7 +97,7 @@ def test_upscale_ai_path(
     mock_to_pil.return_value.return_value = mock_result_img
     
     # Execute
-    result = engine.upscale(dummy_image, "RealESRGAN (AI HD)", "4x")
+    result = engine.upscale(dummy_image, "RealESRGAN (AI HD)", "4x", perf_mode="Ultra (Max Speed)")
     
     # Assertions
     assert result == mock_result_img
@@ -110,7 +110,7 @@ def test_upscale_progress_callback(engine: UpscalerEngine, dummy_image: str) -> 
     def callback(pct):
         progress_calls.append(pct)
         
-    engine.upscale(dummy_image, "Lanczos (Fast CPU)", "2x", progress_callback=callback)
+    engine.upscale(dummy_image, "Lanczos (Fast CPU)", "2x", progress_callback=callback, perf_mode="Ultra (Max Speed)")
     
     assert len(progress_calls) > 0
     assert progress_calls[-1] == 1.0
@@ -123,7 +123,7 @@ def test_upscale_preserves_alpha(engine: UpscalerEngine, tmp_path: Path) -> None
     img.save(img_path)
     
     # Test with PIL path
-    upscaled_img = engine.upscale(str(img_path), "Lanczos (Fast CPU)", "2x")
+    upscaled_img = engine.upscale(str(img_path), "Lanczos (Fast CPU)", "2x", perf_mode="Ultra (Max Speed)")
     
     assert upscaled_img.mode == "RGBA"
     # Check if alpha channel still exists and has correct value at a pixel
