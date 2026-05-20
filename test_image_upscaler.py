@@ -115,5 +115,19 @@ def test_upscale_progress_callback(engine: UpscalerEngine, dummy_image: str) -> 
     assert len(progress_calls) > 0
     assert progress_calls[-1] == 1.0
 
+def test_upscale_preserves_alpha(engine: UpscalerEngine, tmp_path: Path) -> None:
+    """Verify that RGBA images keep their alpha channel after upscaling."""
+    img_path = tmp_path / "test_alpha.png"
+    # Create a 10x10 transparent image
+    img = Image.new("RGBA", (10, 10), (255, 0, 0, 128))
+    img.save(img_path)
+    
+    # Test with PIL path
+    upscaled_img = engine.upscale(str(img_path), "Lanczos (Fast CPU)", "2x")
+    
+    assert upscaled_img.mode == "RGBA"
+    # Check if alpha channel still exists and has correct value at a pixel
+    assert upscaled_img.getpixel((0, 0))[3] == 128
+
 if __name__ == "__main__":
     pytest.main([__file__])

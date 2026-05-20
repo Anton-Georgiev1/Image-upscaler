@@ -5,6 +5,7 @@ from PIL import Image
 import os
 import threading
 import math
+import psutil
 from pathlib import Path
 
 # --- Modern AI Engine Integration (Spandrel) ---
@@ -97,8 +98,16 @@ class UpscalerEngine:
         return out_tensor
 
     def _upscale_ai(self, path, progress_callback=None):
-        """Converts to tensor, runs PyTorch inference, converts back to Image."""
-        img = Image.open(path).convert("RGB")
+        """Converts to tensor, runs PyTorch inference, converts back to Image. Preserves Alpha."""
+        img = Image.open(path)
+        has_alpha = img.mode == "RGBA"
+        
+        if has_alpha:
+            alpha = img.getchannel("A")
+            img = img.convert("RGB")
+        else:
+            img = img.convert("RGB")
+
         img_tensor = ToTensor()(img).unsqueeze(0).to(self.device)
         
         model = self._init_ai_model()
@@ -107,6 +116,12 @@ class UpscalerEngine:
         out_tensor = self._process_with_tiling(img_tensor, model, scale=scale, progress_callback=progress_callback)
         out_img = ToPILImage()(out_tensor.squeeze(0).clamp(0, 1))
         
+        if has_alpha:
+            # Upscale alpha channel using Lanczos for consistency
+            new_size = out_img.size
+            alpha_upscaled = alpha.resize(new_size, Image.Resampling.LANCZOS)
+            out_img.putalpha(alpha_upscaled)
+
         # Free up memory safely
         if self.device.type == "cuda":
             torch.cuda.empty_cache()
@@ -119,9 +134,9 @@ class UpscalerEngine:
 
         is_4k = (scale_val == "4K (Ultra HD)")
 
-        with Image.open(input_path) as img:
-            w, h = img.size
-            img = img.convert("RGB")
+        img = Image.open(input_path)
+        w, h = img.size
+        original_mode = img.mode
 
         # Determine AI constraints based on user choice
         if is_4k:
@@ -137,15 +152,24 @@ class UpscalerEngine:
             result = img
         elif self.has_ai and "RealESRGAN" in model_type:
             # AI outputs native 4x 
+            # We close the initial img here to save memory since _upscale_ai opens its own
+            img.close()
             result = self._upscale_ai(input_path, progress_callback=progress_callback)
             
             # Supersampling: If user selected 2x/3x, we scale the AI 4x result BACK down for sharp quality
             if not is_4k and ai_scale < 4:
                 result = result.resize((int(w * ai_scale), int(h * ai_scale)), Image.Resampling.LANCZOS)
         else:
+            img.close()
             if progress_callback: progress_callback(0.5)
             result = self._upscale_pil(input_path, math.ceil(ai_scale))
             if progress_callback: progress_callback(1.0)
+
+        # Precisely fit to 4K Bounds if requested
+        if is_4k and ratio > 1.0:
+            result = self._resize_to_target(result, 3840, 2160)
+
+        return result
 
         # Precisely fit to 4K Bounds if requested
         if is_4k and ratio > 1.0:
@@ -161,7 +185,7 @@ class UpscalerEngine:
         return img.resize(new_size, Image.Resampling.LANCZOS)
 
     def _upscale_pil(self, path, scale):
-        img = Image.open(path).convert("RGB")
+        img = Image.open(path)
         new_size = (int(img.width * scale), int(img.height * scale))
         return img.resize(new_size, Image.Resampling.LANCZOS)
 
@@ -223,6 +247,11 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.lbl_theme.pack(padx=20, pady=(20, 0), fill="x", side="bottom")
         self.opt_theme = ctk.CTkOptionMenu(self.sidebar, values=["Dark", "Light"], command=lambda m: ctk.set_appearance_mode(m))
         self.opt_theme.pack(padx=20, pady=(5, 30), fill="x", side="bottom")
+
+        # System Monitor
+        self.lbl_cpu = ctk.CTkLabel(self.sidebar, text="System Load: 0%", anchor="w", font=ctk.CTkFont(size=12))
+        self.lbl_cpu.pack(padx=20, pady=(10, 0), fill="x", side="bottom")
+        self._update_cpu_usage()
 
         # Main View
         self.main_view = ctk.CTkFrame(self, corner_radius=15)
@@ -340,6 +369,17 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         if path:
             self.output_image.save(path)
             messagebox.showinfo("Saved", f"Image saved successfully to:\n{path}")
+
+    def _update_cpu_usage(self):
+        """Periodically updates the CPU usage label."""
+        try:
+            # interval=None is non-blocking and returns usage since last call
+            cpu_pct = psutil.cpu_percent(interval=None)
+            self.lbl_cpu.configure(text=f"System Load: {int(cpu_pct)}%")
+        except:
+            pass
+        # Refresh every 1000ms
+        self.after(1000, self._update_cpu_usage)
 
 if __name__ == "__main__":
     ctk.set_appearance_mode("Dark")

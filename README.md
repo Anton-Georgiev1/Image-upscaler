@@ -34,7 +34,7 @@ We believe that every pixel tells a story. Sometimes those stories are blurred b
 1.  **Clone the repository:**
 2.  **Install dependencies:**
     ```bash
-    pip install customtkinter spandrel torch torchvision pillow numpy tkinterdnd2
+    pip install customtkinter spandrel torch torchvision pillow numpy tkinterdnd2 psutil
     ```
 
 ### Model Setup
