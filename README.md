@@ -34,7 +34,7 @@ We believe that every pixel tells a story. Sometimes those stories are blurred b
 1.  **Clone the repository:**
 2.  **Install dependencies:**
     ```bash
-    pip install customtkinter spandrel torch torchvision pillow numpy
+    pip install customtkinter spandrel torch torchvision pillow numpy tkinterdnd2
     ```
 
 ### Model Setup
@@ -54,7 +54,7 @@ To use the AI HD mode, you need the **Real-ESRGAN x4plus** weights:
     ```bash
     python Image_upscaler.py
     ```
-2.  **Open Image:** Select your source file.
+2.  **Open Image:** Select your source file or **Drag & Drop** an image directly onto the preview area.
 3.  **Choose Model:** Select "RealESRGAN (AI HD)" for best quality.
 4.  **Set Scale:** Choose a multiplier (2x, 3x, 4x) or "4K (Ultra HD)".
 5.  **Upscale:** Hit "Start Upscale" and watch the progress bar.

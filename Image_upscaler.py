@@ -1,5 +1,6 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
+from tkinterdnd2 import TkinterDnD, DND_ALL
 from PIL import Image
 import os
 import threading
@@ -151,9 +152,12 @@ class UpscalerEngine:
 
 
 # --- GUI Application ---
-class Image_upscaler(ctk.CTk):
+class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self):
         super().__init__()
+        
+        # Initialize TkinterDnD hooks
+        self.TkdndVersion = TkinterDnD._require(self)
 
         # Renamed application title
         self.title("Image_upscaler")
@@ -211,8 +215,12 @@ class Image_upscaler(ctk.CTk):
         self.main_view.grid_rowconfigure(0, weight=1)
         self.main_view.grid_columnconfigure(0, weight=1)
 
-        self.lbl_preview = ctk.CTkLabel(self.main_view, text="Select an image to preview", text_color="gray")
+        self.lbl_preview = ctk.CTkLabel(self.main_view, text="Select or Drag & Drop an image to preview", text_color="gray")
         self.lbl_preview.grid(row=0, column=0, sticky="nsew")
+        
+        # Enable Drag & Drop on the preview label
+        self.lbl_preview.drop_target_register(DND_ALL)
+        self.lbl_preview.dnd_bind('<<Drop>>', self.handle_drop)
 
         self.progress = ctk.CTkProgressBar(self.main_view)
         self.progress.grid(row=1, column=0, padx=50, pady=(0, 30), sticky="ew")
@@ -221,10 +229,20 @@ class Image_upscaler(ctk.CTk):
     def select_image(self):
         path = filedialog.askopenfilename(filetypes=[("Images", "*.jpg *.jpeg *.png *.webp *.bmp")])
         if path:
-            self.input_path = path
-            self.btn_run.configure(state="normal")
-            self.btn_save.configure(state="disabled")
-            self.show_preview(path)
+            self.load_image(path)
+
+    def handle_drop(self, event):
+        path = event.data.strip('{}') # Remove curly braces for paths with spaces
+        if path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp')):
+            self.load_image(path)
+        else:
+            messagebox.showwarning("Invalid File", "Please drop a valid image file (PNG, JPG, WEBP, BMP).")
+
+    def load_image(self, path):
+        self.input_path = path
+        self.btn_run.configure(state="normal")
+        self.btn_save.configure(state="disabled")
+        self.show_preview(path)
 
     def show_preview(self, path_or_img):
         if isinstance(path_or_img, str):
