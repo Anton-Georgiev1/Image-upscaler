@@ -131,29 +131,35 @@ class UpscalerEngine:
             
         return out_img
 
-    def upscale(self, input_path: str, model_type: str, scale_val: str, progress_callback=None, perf_mode="Responsive") -> Image.Image:
+    def upscale(self, input_path: str, model_type: str, scale_val: str, progress_callback=None, perf_mode="Responsive", custom_size=None) -> Image.Image:
         if not Path(input_path).exists():
             raise ValueError("Input file not found.")
 
         # 1. Parse User Intent
         is_4k_mode = (scale_val == "4K (Ultra HD)")
+        is_custom_mode = (scale_val == "Custom Size")
         
         img = Image.open(input_path)
         w, h = img.size
         
-        # 2. Determine Scale Factors
+        # 2. Determine Scale Factors and Target Dimensions
+        target_w, target_h = None, None
+
         if is_4k_mode:
             # 4K logic: Fit within 3840x2160 box
-            target_w, target_h = 3840, 2160
-            fit_ratio = min(target_w / w, target_h / h)
+            target_w_box, target_h_box = 3840, 2160
+            fit_ratio = min(target_w_box / w, target_h_box / h)
             target_scale = 1.0 if fit_ratio <= 1.0 else fit_ratio
+        elif is_custom_mode and custom_size:
+            target_w, target_h = custom_size
+            # Calculate required scale to reach the larger dimension
+            target_scale = max(target_w / w, target_h / h)
         else:
             # Multiplier logic: 2x, 3x, 4x
             target_scale = float(scale_val.replace("x", ""))
-            fit_ratio = None # Not used for multipliers
 
         # 3. Execution Phase
-        if target_scale <= 1.0:
+        if target_scale <= 1.0 and not is_custom_mode:
             if progress_callback: progress_callback(1.0)
             result = img
         elif self.has_ai and "RealESRGAN" in model_type:
@@ -161,26 +167,27 @@ class UpscalerEngine:
             img.close()
             result = self._upscale_ai(input_path, progress_callback=progress_callback, perf_mode=perf_mode)
             
-            # Post-processing: Resize AI 4x result to match User Intent (2x, 3x, or 4K Fit)
-            # If User wanted exactly 4x, we do nothing (AI result is already 4x)
+            # Post-processing: Resize AI 4x result to match User Intent
             if is_4k_mode:
-                # Always resize to the precise 4K fit bounds
                 result = self._resize_to_target(result, 3840, 2160)
-            elif target_scale < 4.0:
-                # Downsample 4x AI result to 2x or 3x for high quality supersampling
+            elif is_custom_mode:
+                # User specified exact pixels
+                result = result.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            elif target_scale != 4.0:
+                # Downsample 4x AI result to 2x or 3x for high quality (Supersampling)
+                # or upsample if user somehow picked > 4x
                 result = result.resize((int(w * target_scale), int(h * target_scale)), Image.Resampling.LANCZOS)
         else:
             # CPU/PIL Path
             img.close()
             if progress_callback: progress_callback(0.5)
-            # We scale to the ceil multiplier first, then downsample if it's 4K fit
-            result = self._upscale_pil(input_path, math.ceil(target_scale))
+            # We scale to the required multiplier using high-quality Lanczos
+            result = self._upscale_pil(input_path, target_scale)
             
             if is_4k_mode:
                 result = self._resize_to_target(result, 3840, 2160)
-            elif target_scale < math.ceil(target_scale):
-                # Handle potential non-integer scales if we ever add them
-                result = result.resize((int(w * target_scale), int(h * target_scale)), Image.Resampling.LANCZOS)
+            elif is_custom_mode:
+                result = result.resize((target_w, target_h), Image.Resampling.LANCZOS)
             
             if progress_callback: progress_callback(1.0)
 
@@ -241,8 +248,20 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.lbl_scale = ctk.CTkLabel(self.sidebar, text="Scale Factor:", anchor="w")
         self.lbl_scale.pack(padx=20, pady=(10, 0), fill="x")
         
-        self.opt_scale = ctk.CTkOptionMenu(self.sidebar, values=["2x", "3x", "4x", "4K (Ultra HD)"])
+        self.opt_scale = ctk.CTkOptionMenu(self.sidebar, values=["2x", "3x", "4x", "4K (Ultra HD)", "Custom Size"], command=self._on_scale_change)
         self.opt_scale.pack(padx=20, pady=10, fill="x")
+
+        # Custom Size Inputs (hidden initially)
+        self.frame_custom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        
+        self.entry_width = ctk.CTkEntry(self.frame_custom, placeholder_text="Width", width=100)
+        self.entry_width.pack(side="left", padx=(20, 5), pady=5)
+        
+        self.lbl_x = ctk.CTkLabel(self.frame_custom, text="x")
+        self.lbl_x.pack(side="left", pady=5)
+        
+        self.entry_height = ctk.CTkEntry(self.frame_custom, placeholder_text="Height", width=100)
+        self.entry_height.pack(side="left", padx=(5, 20), pady=5)
 
         self.lbl_perf = ctk.CTkLabel(self.sidebar, text="Processing Mode:", anchor="w")
         self.lbl_perf.pack(padx=20, pady=(10, 0), fill="x")
@@ -324,6 +343,12 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.preview_tk = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
         self.lbl_preview.configure(image=self.preview_tk, text="")
 
+    def _on_scale_change(self, choice):
+        if choice == "Custom Size":
+            self.frame_custom.pack(pady=5, fill="x", after=self.opt_scale)
+        else:
+            self.frame_custom.pack_forget()
+
     def run_upscale(self):
         if not self.input_path: return
         
@@ -331,6 +356,17 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         scale_val = self.opt_scale.get() 
         perf_mode = self.opt_perf.get()
         
+        custom_size = None
+        if scale_val == "Custom Size":
+            try:
+                cw = int(self.entry_width.get())
+                ch = int(self.entry_height.get())
+                if cw <= 0 or ch <= 0: raise ValueError()
+                custom_size = (cw, ch)
+            except ValueError:
+                messagebox.showerror("Invalid Input", "Please enter valid positive numbers for Width and Height.")
+                return
+
         # Checking for the manual weights file if AI is selected
         if "RealESRGAN" in model and not os.path.exists("models/RealESRGAN_x4plus.pth"):
             messagebox.showerror(
@@ -359,15 +395,18 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             # Use self.after to update UI from the background thread safely
             self.after(0, lambda: self._update_progress_ui(pct))
 
-        threading.Thread(target=self._process, args=(model, scale_val, progress_callback, perf_mode), daemon=True).start()
+        threading.Thread(target=self._process, args=(model, scale_val, progress_callback, perf_mode, custom_size), daemon=True).start()
 
     def _update_progress_ui(self, pct):
         self.progress.set(pct)
         self.lbl_status.configure(text=f"Processing: {int(pct * 100)}%")
 
-    def _process(self, model, scale_val, progress_callback, perf_mode):
+    def _process(self, model, scale_val, progress_callback, perf_mode, custom_size):
         try:
-            self.output_image = self.engine.upscale(self.input_path, model, scale_val, progress_callback=progress_callback, perf_mode=perf_mode)
+            self.output_image = self.engine.upscale(self.input_path, model, scale_val, 
+                                                    progress_callback=progress_callback, 
+                                                    perf_mode=perf_mode, 
+                                                    custom_size=custom_size)
             self.after(0, self._finish)
         except Exception as e:
             # Enhanced error reporting
