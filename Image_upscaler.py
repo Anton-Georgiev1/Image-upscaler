@@ -221,6 +221,11 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.engine = UpscalerEngine()
         self.input_path = None
         self.output_image = None
+        
+        # Settings state
+        self.autosave_enabled = False
+        self.autosave_dir = ""
+        self.settings_window = None
 
         # --- Layout ---
         self.grid_columnconfigure(1, weight=1)
@@ -276,6 +281,10 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.btn_save = ctk.CTkButton(self.sidebar, text="Save Result", command=self.save_image, state="disabled", height=40)
         self.btn_save.pack(padx=20, pady=10, fill="x")
 
+        self.btn_settings = ctk.CTkButton(self.sidebar, text="Settings", command=self.open_settings, 
+                                          fg_color="transparent", border_width=2, height=40)
+        self.btn_settings.pack(padx=20, pady=10, fill="x")
+
         # Theme toggle
         self.lbl_theme = ctk.CTkLabel(self.sidebar, text="Theme:", anchor="w")
         self.lbl_theme.pack(padx=20, pady=(20, 0), fill="x", side="bottom")
@@ -319,29 +328,44 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             self.load_image(path)
 
     def handle_drop(self, event):
-        path = event.data.strip('{}') # Remove curly braces for paths with spaces
+        # Robust path parsing for TkinterDnD (handles spaces and braces)
+        import re
+        data = event.data
+        # Match content inside braces or non-space characters
+        paths = re.findall(r'\{(.*?)\}|(\S+)', data)
+        # Flatten the list of tuples from findall
+        paths = [p[0] if p[0] else p[1] for p in paths]
+        
+        if not paths: return
+        
+        path = paths[0]
         if path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp')):
             self.load_image(path)
         else:
             messagebox.showwarning("Invalid File", "Please drop a valid image file (PNG, JPG, WEBP, BMP).")
 
     def load_image(self, path):
+        # Normalize path
+        path = os.path.normpath(path)
         self.input_path = path
         self.btn_run.configure(state="normal")
         self.btn_save.configure(state="disabled")
         self.show_preview(path)
 
     def show_preview(self, path_or_img):
-        if isinstance(path_or_img, str):
-            img = Image.open(path_or_img).convert("RGB")
-        else:
-            img = path_or_img.copy()
+        try:
+            if isinstance(path_or_img, str):
+                img = Image.open(path_or_img).convert("RGB")
+            else:
+                img = path_or_img.copy()
+                
+            target_w, target_h = 750, 550
+            img.thumbnail((target_w, target_h))
             
-        target_w, target_h = 750, 550
-        img.thumbnail((target_w, target_h))
-        
-        self.preview_tk = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
-        self.lbl_preview.configure(image=self.preview_tk, text="")
+            self.preview_tk = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
+            self.lbl_preview.configure(image=self.preview_tk, text="")
+        except Exception as e:
+            messagebox.showerror("Preview Error", f"Failed to load preview: {e}")
 
     def _on_scale_change(self, choice):
         if choice == "Custom Size":
@@ -352,6 +376,11 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
     def run_upscale(self):
         if not self.input_path: return
         
+        # Check if input file still exists
+        if not os.path.exists(self.input_path):
+            messagebox.showerror("File Error", "The input image file no longer exists.")
+            return
+
         model = self.opt_model.get()
         scale_val = self.opt_scale.get() 
         perf_mode = self.opt_perf.get()
@@ -430,7 +459,28 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.btn_run.configure(state="normal")
         self.btn_select.configure(state="normal")
         self.btn_save.configure(state="normal")
-        messagebox.showinfo("Success", "Upscaling complete!")
+
+        autosave_info = ""
+        if self.autosave_enabled and self.autosave_dir:
+            try:
+                if not os.path.exists(self.autosave_dir):
+                    os.makedirs(self.autosave_dir, exist_ok=True)
+                
+                input_name = Path(self.input_path).stem
+                output_name = f"{input_name}_upscaled.png"
+                save_path = os.path.join(self.autosave_dir, output_name)
+                
+                counter = 1
+                while os.path.exists(save_path):
+                    save_path = os.path.join(self.autosave_dir, f"{input_name}_upscaled_{counter}.png")
+                    counter += 1
+                
+                self.output_image.save(save_path)
+                autosave_info = f"\n\nAutosaved to: {save_path}"
+            except Exception as e:
+                messagebox.showerror("Autosave Error", f"Failed to autosave image: {e}")
+
+        messagebox.showinfo("Success", f"Upscaling complete!{autosave_info}")
 
     def _reset_ui(self):
         # Restore normal priority
@@ -449,8 +499,117 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         path = filedialog.asksaveasfilename(defaultextension=".png", 
                                             filetypes=[("PNG", "*.png"), ("JPG", "*.jpg")])
         if path:
-            self.output_image.save(path)
-            messagebox.showinfo("Saved", f"Image saved successfully to:\n{path}")
+            try:
+                self.output_image.save(path)
+                messagebox.showinfo("Saved", f"Image saved successfully to:\n{path}")
+            except Exception as e:
+                messagebox.showerror("Save Error", f"Failed to save image: {e}")
+
+    def open_settings(self):
+        """Opens a window for application settings."""
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.settings_window.focus()
+            return
+
+        self.settings_window = ctk.CTkToplevel(self)
+        self.settings_window.title("Settings")
+        self.settings_window.geometry("500x400")
+        self.settings_window.resizable(False, False)
+        
+        # Ensure it stays on top and grabs focus
+        self.settings_window.attributes("-topmost", True)
+        self.settings_window.after(100, self.settings_window.focus)
+        
+        main_frame = ctk.CTkFrame(self.settings_window, corner_radius=10)
+        main_frame.pack(padx=20, pady=20, fill="both", expand=True)
+
+        lbl_title = ctk.CTkLabel(main_frame, text="Application Settings", font=ctk.CTkFont(size=18, weight="bold"))
+        lbl_title.pack(pady=(15, 20))
+
+        # Autosave Toggle
+        self.check_autosave = ctk.CTkCheckBox(main_frame, text="Enable Autosave after upscaling", 
+                                              command=self._toggle_autosave_ui)
+        if self.autosave_enabled:
+            self.check_autosave.select()
+        self.check_autosave.pack(padx=20, pady=10, anchor="w")
+
+        # Save Directory Selection
+        self.frame_dir = ctk.CTkFrame(main_frame, fg_color="transparent")
+        self.frame_dir.pack(padx=20, pady=5, fill="x")
+
+        self.lbl_dir_title = ctk.CTkLabel(self.frame_dir, text="Autosave Directory:", font=ctk.CTkFont(size=12))
+        self.lbl_dir_title.pack(anchor="w")
+
+        self.entry_dir = ctk.CTkEntry(self.frame_dir, placeholder_text="Select directory...", width=300)
+        self.entry_dir.insert(0, self.autosave_dir)
+        self.entry_dir.pack(side="left", pady=5, fill="x", expand=True)
+        
+        self.btn_browse = ctk.CTkButton(self.frame_dir, text="Browse", width=80, command=self._browse_autosave_dir)
+        self.btn_browse.pack(side="left", padx=(10, 0), pady=5)
+
+        # Buttons Frame
+        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        btn_frame.pack(pady=(30, 10), fill="x")
+
+        self.btn_save_settings = ctk.CTkButton(btn_frame, text="Save Settings", command=self._save_settings,
+                                               fg_color="#1f6aa5", hover_color="#144870")
+        self.btn_save_settings.pack(side="right", padx=10)
+
+        btn_cancel = ctk.CTkButton(btn_frame, text="Cancel", command=self.settings_window.destroy,
+                                   fg_color="transparent", border_width=1)
+        btn_cancel.pack(side="right", padx=10)
+
+        # Initialize UI state
+        self._toggle_autosave_ui()
+
+    def _save_settings(self):
+        """Validates and saves settings."""
+        is_enabled = bool(self.check_autosave.get())
+        new_dir = self.entry_dir.get().strip()
+        
+        if is_enabled:
+            if not new_dir:
+                messagebox.showerror("Settings Error", "Please select a directory for autosave.")
+                return
+            
+            # Check if directory is valid/writable
+            try:
+                if not os.path.exists(new_dir):
+                    # Try creating it to verify validity
+                    os.makedirs(new_dir, exist_ok=True)
+                
+                # Verify writability
+                test_file = os.path.join(new_dir, ".write_test")
+                with open(test_file, "w") as f:
+                    f.write("test")
+                os.remove(test_file)
+            except Exception as e:
+                messagebox.showerror("Settings Error", f"Cannot use this directory:\n{e}")
+                return
+
+        self.autosave_enabled = is_enabled
+        self.autosave_dir = new_dir
+        self.settings_window.destroy()
+        messagebox.showinfo("Settings", "Settings saved successfully.")
+
+    def _toggle_autosave_ui(self):
+        is_checked = self.check_autosave.get()
+        state = "normal" if is_checked else "disabled"
+        self.entry_dir.configure(state=state)
+        self.btn_browse.configure(state=state)
+        
+        # Adjust label color based on state for better visibility
+        if is_checked:
+            self.lbl_dir_title.configure(text_color=None) # Reset to theme default
+        else:
+            self.lbl_dir_title.configure(text_color="gray")
+
+    def _browse_autosave_dir(self):
+        current_dir = self.entry_dir.get().strip() or os.getcwd()
+        directory = filedialog.askdirectory(initialdir=current_dir)
+        if directory:
+            self.entry_dir.delete(0, "end")
+            self.entry_dir.insert(0, directory)
 
     def _update_cpu_usage(self):
         """Periodically updates the CPU usage label."""
