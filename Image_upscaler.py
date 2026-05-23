@@ -600,7 +600,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         
         # Adjust label color based on state for better visibility
         if is_checked:
-            self.lbl_dir_title.configure(text_color=None) # Reset to theme default
+            self.lbl_dir_title.configure(text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"]) # Reset to theme default
         else:
             self.lbl_dir_title.configure(text_color="gray")
 
