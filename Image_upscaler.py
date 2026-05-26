@@ -223,6 +223,9 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.input_path = None
         self.output_image = None
         
+        # Application state
+        self.is_processing = False
+        
         # Settings state
         self.autosave_enabled = False
         self.autosave_dir = ""
@@ -269,6 +272,10 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         
         self.entry_height = ctk.CTkEntry(self.frame_custom, placeholder_text="Height", width=100)
         self.entry_height.pack(side="left", padx=(5, 20), pady=5)
+
+        # Ensure frame_custom is in the right packing order even when hidden
+        self.frame_custom.pack(padx=20, pady=5, fill="x")
+        self.frame_custom.pack_forget()
 
         self.lbl_perf = ctk.CTkLabel(self.sidebar, text="Processing Mode:", anchor="w")
         self.lbl_perf.pack(padx=20, pady=(10, 0), fill="x")
@@ -330,6 +337,9 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             self.load_image(path)
 
     def handle_drop(self, event):
+        if self.is_processing:
+            return
+
         # Robust path parsing for TkinterDnD (handles spaces and braces)
         try:
             paths = self.splitlist(event.data)
@@ -415,6 +425,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.btn_run.configure(state="disabled")
         self.btn_select.configure(state="disabled")
         self.btn_save.configure(state="disabled")
+        self.is_processing = True
         
         self.progress.set(0)
         self.lbl_status.configure(text="Initializing AI Engine...")
@@ -432,19 +443,21 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             # Use self.after to update UI from the background thread safely
             self.after(0, lambda: self._update_progress_ui(pct))
 
-        threading.Thread(target=self._process, args=(model, scale_val, progress_callback, perf_mode, custom_size), daemon=True).start()
+        # Capture input_path locally to avoid race conditions if self.input_path changes
+        current_input_path = self.input_path
+        threading.Thread(target=self._process, args=(current_input_path, model, scale_val, progress_callback, perf_mode, custom_size), daemon=True).start()
 
     def _update_progress_ui(self, pct):
         self.progress.set(pct)
         self.lbl_status.configure(text=f"Processing: {int(pct * 100)}%")
 
-    def _process(self, model, scale_val, progress_callback, perf_mode, custom_size):
+    def _process(self, input_path, model, scale_val, progress_callback, perf_mode, custom_size):
         try:
-            self.output_image = self.engine.upscale(self.input_path, model, scale_val, 
-                                                    progress_callback=progress_callback, 
-                                                    perf_mode=perf_mode, 
-                                                    custom_size=custom_size)
-            self.after(0, self._finish)
+            result = self.engine.upscale(input_path, model, scale_val, 
+                                         progress_callback=progress_callback, 
+                                         perf_mode=perf_mode, 
+                                         custom_size=custom_size)
+            self.after(0, lambda: self._finish(result, input_path))
         except Exception as e:
             # Enhanced error reporting
             err_msg = str(e)
@@ -454,7 +467,10 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             self.after(0, lambda: messagebox.showerror("Upscale Error", f"Failed: {err_msg}"))
             self.after(0, self._reset_ui)
 
-    def _finish(self):
+    def _finish(self, result, input_path):
+        self.output_image = result
+        self.is_processing = False
+        
         # Restore normal priority
         try:
             self.process.nice(psutil.NORMAL_PRIORITY_CLASS)
@@ -474,7 +490,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
                 if not os.path.exists(self.autosave_dir):
                     os.makedirs(self.autosave_dir, exist_ok=True)
                 
-                input_name = Path(self.input_path).stem
+                input_name = Path(input_path).stem
                 output_name = f"{input_name}_upscaled.png"
                 save_path = os.path.join(self.autosave_dir, output_name)
                 
@@ -491,6 +507,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         messagebox.showinfo("Success", f"Upscaling complete!{autosave_info}")
 
     def _reset_ui(self):
+        self.is_processing = False
         # Restore normal priority
         try:
             self.process.nice(psutil.NORMAL_PRIORITY_CLASS)

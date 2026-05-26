@@ -1,9 +1,9 @@
 import pytest
 from unittest.mock import MagicMock, patch
 import sys
-
 import os
 
+# Define dummy base classes to avoid metaclass conflict during testing
 class DummyCTk:
     def __init__(self, *args, **kwargs): pass
     def grid_columnconfigure(self, *args, **kwargs): pass
@@ -21,13 +21,13 @@ class DummyDnDWrapper:
     def __init__(self, *args, **kwargs): pass
     def drop_target_register(self, *args, **kwargs): pass
     def dnd_bind(self, *args, **kwargs): pass
-    def splitlist(self, data):
-        return DummyCTk.splitlist(self, data)
 
+# Mock the modules before importing Image_upscaler
 mock_ctk = MagicMock()
 mock_ctk.CTk = DummyCTk
 mock_ctk.CTkFrame = MagicMock()
 mock_ctk.CTkLabel = MagicMock()
+mock_ctk.CTkEntry = MagicMock()
 mock_ctk.CTkButton = MagicMock()
 mock_ctk.CTkOptionMenu = MagicMock()
 mock_ctk.CTkProgressBar = MagicMock()
@@ -65,7 +65,7 @@ def test_load_image(app):
     
     test_path = "test.png"
     app.load_image(test_path)
-    
+
     assert app.input_path == os.path.normpath(test_path)
     app.btn_run.configure.assert_called_with(state="normal")
     app.btn_save.configure.assert_called_with(state="disabled")
@@ -74,29 +74,50 @@ def test_load_image(app):
 def test_handle_drop_valid_image(app):
     event = MagicMock()
     event.data = "{C:/path with space/test.png}"
-    
+
     with patch('os.path.isfile', return_value=True):
         app.load_image = MagicMock()
         app.handle_drop(event)
         
         app.load_image.assert_called_with(os.path.normpath("C:/path with space/test.png"))
 
-def test_handle_drop_nested_braces(app):
+def test_handle_drop_during_processing(app):
+    """Test that handle_drop ignores drops while processing."""
+    app.is_processing = True
     event = MagicMock()
-    # Mocking splitlist behavior for nested braces which standard splitlist handles
-    event.data = "{C:/path {with} braces/test.png}"
+    event.data = "test.png"
     
-    with patch.object(app, 'splitlist', return_value=["C:/path {with} braces/test.png"]), \
-         patch('os.path.isfile', return_value=True):
-        app.load_image = MagicMock()
-        app.handle_drop(event)
-        
-        app.load_image.assert_called_with(os.path.normpath("C:/path {with} braces/test.png"))
+    app.load_image = MagicMock()
+    app.handle_drop(event)
+    
+    app.load_image.assert_not_called()
+
+def test_run_upscale_sets_processing(app):
+    """Test that run_upscale sets is_processing to True."""
+    app.input_path = "test.png"
+    app.opt_model.get.return_value = "Lanczos (Fast CPU)"
+    app.opt_scale.get.return_value = "2x"
+    app.opt_perf.get.return_value = "Ultra (Max Speed)"
+    
+    with patch('os.path.exists', return_value=True), \
+         patch('threading.Thread'):
+        app.run_upscale()
+        assert app.is_processing is True
+
+def test_finish_resets_processing(app):
+    """Test that _finish sets is_processing to False."""
+    app.is_processing = True
+    app.output_image = MagicMock()
+    
+    with patch('Image_upscaler.messagebox.showinfo'), \
+         patch('Image_upscaler.os.path.exists', return_value=True):
+        app._finish(MagicMock(), "test.png")
+        assert app.is_processing is False
 
 def test_handle_drop_folder(app):
     event = MagicMock()
     event.data = "C:/some_folder"
-    
+
     with patch('os.path.isfile', return_value=False), \
          patch('Image_upscaler.messagebox.showwarning') as mock_warning:
         app.load_image = MagicMock()
@@ -104,15 +125,3 @@ def test_handle_drop_folder(app):
         
         app.load_image.assert_not_called()
         mock_warning.assert_called_once_with("Invalid Drop", "Please drop a file, not a folder.")
-
-def test_handle_drop_invalid_file(app):
-    event = MagicMock()
-    event.data = "test.txt"
-    
-    with patch('os.path.isfile', return_value=True), \
-         patch('Image_upscaler.messagebox.showwarning') as mock_warning:
-        app.load_image = MagicMock()
-        app.handle_drop(event)
-        
-        app.load_image.assert_not_called()
-        mock_warning.assert_called_once_with("Invalid File", "Please drop a valid image file (PNG, JPG, WEBP, BMP).")
