@@ -222,3 +222,4 @@ salt.key
 data.enc
 recovery.enc
 recovery.hash
+settings.json

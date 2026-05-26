@@ -3,6 +3,7 @@ from tkinter import filedialog, messagebox
 from tkinterdnd2 import TkinterDnD, DND_ALL
 from PIL import Image
 import os
+import json
 import threading
 import math
 import psutil
@@ -226,6 +227,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.autosave_enabled = False
         self.autosave_dir = ""
         self.settings_window = None
+        self._load_settings()
 
         # --- Layout ---
         self.grid_columnconfigure(1, weight=1)
@@ -471,7 +473,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
                 save_path = os.path.join(self.autosave_dir, output_name)
                 
                 counter = 1
-                while os.path.exists(save_path):
+                while os.path.exists(save_path) and counter < 1000:
                     save_path = os.path.join(self.autosave_dir, f"{input_name}_upscaled_{counter}.png")
                     counter += 1
                 
@@ -504,6 +506,32 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
                 messagebox.showinfo("Saved", f"Image saved successfully to:\n{path}")
             except Exception as e:
                 messagebox.showerror("Save Error", f"Failed to save image: {e}")
+
+    def _load_settings(self):
+        """Loads settings from a JSON file."""
+        settings_path = os.path.join(os.path.dirname(__file__), "settings.json")
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, "r") as f:
+                    settings = json.load(f)
+                    if isinstance(settings, dict):
+                        self.autosave_enabled = settings.get("autosave_enabled", False)
+                        self.autosave_dir = settings.get("autosave_dir", "")
+            except Exception as e:
+                print(f"Error loading settings: {e}")
+
+    def _save_settings_to_disk(self):
+        """Saves current settings to a JSON file."""
+        settings_path = os.path.join(os.path.dirname(__file__), "settings.json")
+        settings = {
+            "autosave_enabled": self.autosave_enabled,
+            "autosave_dir": self.autosave_dir
+        }
+        try:
+            with open(settings_path, "w") as f:
+                json.dump(settings, f, indent=4)
+        except Exception as e:
+            messagebox.showerror("Settings Error", f"Failed to save settings to disk: {e}")
 
     def open_settings(self):
         """Opens a window for application settings."""
@@ -589,6 +617,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.autosave_enabled = is_enabled
         self.autosave_dir = new_dir
+        self._save_settings_to_disk()
         self.settings_window.destroy()
         messagebox.showinfo("Settings", "Settings saved successfully.")
 

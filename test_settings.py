@@ -49,7 +49,8 @@ from Image_upscaler import Image_upscaler
 @pytest.fixture
 def app():
     with patch('Image_upscaler.UpscalerEngine'), \
-         patch('Image_upscaler.TkinterDnD._require'):
+         patch('Image_upscaler.TkinterDnD._require'), \
+         patch('Image_upscaler.Image_upscaler._load_settings'):
         with patch('customtkinter.CTkFrame'), \
              patch('customtkinter.CTkLabel'), \
              patch('customtkinter.CTkButton'), \
@@ -58,6 +59,10 @@ def app():
              patch('psutil.Process'):
             
             app_instance = Image_upscaler()
+            
+            # Reset default values to ensure clean test state
+            app_instance.autosave_enabled = False
+            app_instance.autosave_dir = ""
             
             # Clear all method side-effects on background callbacks
             app_instance._toggle_autosave_ui = MagicMock()
