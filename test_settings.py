@@ -13,6 +13,12 @@ class DummyCTk:
     def attributes(self, *args, **kwargs): pass
     def after(self, *args, **kwargs): pass
     def mainloop(self, *args, **kwargs): pass
+    def winfo_exists(self, *args, **kwargs): return True
+    def splitlist(self, data):
+        if not data: return []
+        if data.startswith('{') and data.endswith('}'):
+            return [data[1:-1]]
+        return data.split()
 
 class DummyDnDWrapper:
     def __init__(self, *args, **kwargs): pass

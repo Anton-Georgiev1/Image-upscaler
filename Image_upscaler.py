@@ -331,18 +331,24 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def handle_drop(self, event):
         # Robust path parsing for TkinterDnD (handles spaces and braces)
-        import re
-        data = event.data
-        # Match content inside braces or non-space characters
-        paths = re.findall(r'\{(.*?)\}|(\S+)', data)
-        # Flatten the list of tuples from findall
-        paths = [p[0] if p[0] else p[1] for p in paths]
+        try:
+            paths = self.splitlist(event.data)
+        except Exception:
+            # Fallback for unexpected data formats
+            import re
+            data = event.data
+            paths = re.findall(r'\{(.*?)\}|(\S+)', data)
+            paths = [p[0] if p[0] else p[1] for p in paths]
         
         if not paths: return
         
         path = paths[0]
-        if path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp')):
+        # Normalize and check if it's a file
+        path = os.path.normpath(path)
+        if os.path.isfile(path) and path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp')):
             self.load_image(path)
+        elif not os.path.isfile(path):
+             messagebox.showwarning("Invalid Drop", "Please drop a file, not a folder.")
         else:
             messagebox.showwarning("Invalid File", "Please drop a valid image file (PNG, JPG, WEBP, BMP).")
 
