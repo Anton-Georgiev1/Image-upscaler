@@ -656,13 +656,19 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             ctk.set_appearance_mode(theme)
             
             self.entry_width.delete(0, "end")
-            self.entry_width.insert(0, str(settings.get("custom_width", self.defaults["custom_width"])))
+            val_w = settings.get("custom_width")
+            if val_w is None: val_w = self.defaults["custom_width"]
+            self.entry_width.insert(0, str(val_w))
             
             self.entry_height.delete(0, "end")
-            self.entry_height.insert(0, str(settings.get("custom_height", self.defaults["custom_height"])))
+            val_h = settings.get("custom_height")
+            if val_h is None: val_h = self.defaults["custom_height"]
+            self.entry_height.insert(0, str(val_h))
 
             self.entry_dpi.delete(0, "end")
-            self.entry_dpi.insert(0, str(settings.get("custom_dpi", self.defaults["custom_dpi"])))
+            val_dpi = settings.get("custom_dpi")
+            if val_dpi is None: val_dpi = self.defaults["custom_dpi"]
+            self.entry_dpi.insert(0, str(val_dpi))
         except Exception as e:
             print(f"Error applying settings to UI: {e}")
 
