@@ -15,6 +15,8 @@ class DummyCTk:
     def attributes(self, *args, **kwargs): pass
     def after(self, *args, **kwargs): pass
     def mainloop(self, *args, **kwargs): pass
+    def protocol(self, *args, **kwargs): pass
+    def destroy(self, *args, **kwargs): pass
     def winfo_exists(self, *args, **kwargs): return True
     def splitlist(self, data):
         if not data: return []
@@ -158,3 +160,31 @@ def test_autosave_counter_logic(app, tmp_path):
         
         expected_path = os.path.join(str(tmp_path), "test_upscaled_2.png")
         app.output_image.save.assert_called_with(expected_path)
+
+def test_reset_settings(app):
+    """Test that reset_settings restores default values."""
+    app.autosave_enabled = True
+    app.autosave_dir = "/custom/dir"
+    
+    # Mocking widgets
+    app.opt_model = MagicMock()
+    app.opt_scale = MagicMock()
+    app.opt_perf = MagicMock()
+    app.opt_theme = MagicMock()
+    app.entry_width = MagicMock()
+    app.entry_height = MagicMock()
+    
+    with patch('Image_upscaler.messagebox.askyesno', return_value=True), \
+         patch('Image_upscaler.messagebox.showinfo'), \
+         patch('Image_upscaler.Image_upscaler._save_settings_to_disk'):
+        app.reset_settings()
+        
+        assert app.autosave_enabled == app.defaults["autosave_enabled"]
+        assert app.autosave_dir == app.defaults["autosave_dir"]
+        app.opt_model.set.assert_called_with(app.defaults["model"])
+
+def test_on_closing(app):
+    """Test that settings are saved on closing."""
+    with patch('Image_upscaler.Image_upscaler._save_settings_to_disk') as mock_save:
+        app._on_closing()
+        mock_save.assert_called_once()

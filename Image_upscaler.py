@@ -230,7 +230,18 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.autosave_enabled = False
         self.autosave_dir = ""
         self.settings_window = None
-        self._load_settings()
+        
+        # Default settings
+        self.defaults = {
+            "model": "RealESRGAN (AI HD)",
+            "scale": "2x",
+            "perf_mode": "Responsive (Smooth PC)",
+            "theme": "Dark",
+            "custom_width": "",
+            "custom_height": "",
+            "autosave_enabled": False,
+            "autosave_dir": ""
+        }
 
         # --- Layout ---
         self.grid_columnconfigure(1, weight=1)
@@ -290,6 +301,10 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.btn_save = ctk.CTkButton(self.sidebar, text="Save Result", command=self.save_image, state="disabled", height=40)
         self.btn_save.pack(padx=20, pady=10, fill="x")
 
+        self.btn_reset_ui = ctk.CTkButton(self.sidebar, text="Reset Settings", command=self.reset_upscale_settings, 
+                                          fg_color="transparent", border_width=2, height=40)
+        self.btn_reset_ui.pack(padx=20, pady=10, fill="x")
+
         self.btn_settings = ctk.CTkButton(self.sidebar, text="Settings", command=self.open_settings, 
                                           fg_color="transparent", border_width=2, height=40)
         self.btn_settings.pack(padx=20, pady=10, fill="x")
@@ -299,6 +314,12 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.lbl_theme.pack(padx=20, pady=(20, 0), fill="x", side="bottom")
         self.opt_theme = ctk.CTkOptionMenu(self.sidebar, values=["Dark", "Light"], command=lambda m: ctk.set_appearance_mode(m))
         self.opt_theme.pack(padx=20, pady=(5, 30), fill="x", side="bottom")
+
+        # Load and apply settings
+        self._load_settings()
+
+        # Handle app closing
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
         # System Monitor
         self.process = psutil.Process(os.getpid())
@@ -531,22 +552,55 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
                 messagebox.showerror("Save Error", f"Failed to save image: {e}")
 
     def _load_settings(self):
-        """Loads settings from a JSON file."""
+        """Loads settings from a JSON file and applies them to the UI."""
         settings_path = os.path.join(os.path.dirname(__file__), "settings.json")
+        settings = self.defaults.copy()
+        
         if os.path.exists(settings_path):
             try:
                 with open(settings_path, "r") as f:
-                    settings = json.load(f)
-                    if isinstance(settings, dict):
-                        self.autosave_enabled = settings.get("autosave_enabled", False)
-                        self.autosave_dir = settings.get("autosave_dir", "")
+                    loaded_settings = json.load(f)
+                    if isinstance(loaded_settings, dict):
+                        settings.update(loaded_settings)
             except Exception as e:
                 print(f"Error loading settings: {e}")
 
+        # Apply settings to state variables
+        self.autosave_enabled = settings.get("autosave_enabled", self.defaults["autosave_enabled"])
+        self.autosave_dir = settings.get("autosave_dir", self.defaults["autosave_dir"])
+
+        # Apply settings to UI widgets
+        try:
+            self.opt_model.set(settings.get("model", self.defaults["model"]))
+            
+            scale = settings.get("scale", self.defaults["scale"])
+            self.opt_scale.set(scale)
+            self._on_scale_change(scale)
+            
+            self.opt_perf.set(settings.get("perf_mode", self.defaults["perf_mode"]))
+            
+            theme = settings.get("theme", self.defaults["theme"])
+            self.opt_theme.set(theme)
+            ctk.set_appearance_mode(theme)
+            
+            self.entry_width.delete(0, "end")
+            self.entry_width.insert(0, str(settings.get("custom_width", self.defaults["custom_width"])))
+            
+            self.entry_height.delete(0, "end")
+            self.entry_height.insert(0, str(settings.get("custom_height", self.defaults["custom_height"])))
+        except Exception as e:
+            print(f"Error applying settings to UI: {e}")
+
     def _save_settings_to_disk(self):
-        """Saves current settings to a JSON file."""
+        """Saves current settings (from UI and state) to a JSON file."""
         settings_path = os.path.join(os.path.dirname(__file__), "settings.json")
         settings = {
+            "model": self.opt_model.get(),
+            "scale": self.opt_scale.get(),
+            "perf_mode": self.opt_perf.get(),
+            "theme": self.opt_theme.get(),
+            "custom_width": self.entry_width.get(),
+            "custom_height": self.entry_height.get(),
             "autosave_enabled": self.autosave_enabled,
             "autosave_dir": self.autosave_dir
         }
@@ -554,7 +608,67 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             with open(settings_path, "w") as f:
                 json.dump(settings, f, indent=4)
         except Exception as e:
-            messagebox.showerror("Settings Error", f"Failed to save settings to disk: {e}")
+            # Only show error if we're not closing the app
+            if hasattr(self, "settings_window") and self.settings_window and self.settings_window.winfo_exists():
+                messagebox.showerror("Settings Error", f"Failed to save settings to disk: {e}")
+            else:
+                print(f"Failed to save settings to disk: {e}")
+
+    def reset_upscale_settings(self):
+        """Resets only the upscale parameters (Model, Scale, Mode, Theme)."""
+        if messagebox.askyesno("Reset", "Reset upscale settings to defaults?"):
+            self._apply_ui_defaults()
+            self._save_settings_to_disk()
+            messagebox.showinfo("Reset", "Upscale settings reset to defaults.")
+
+    def _apply_ui_defaults(self):
+        """Internal helper to apply default values to UI widgets."""
+        self.opt_model.set(self.defaults["model"])
+        
+        scale = self.defaults["scale"]
+        self.opt_scale.set(scale)
+        self._on_scale_change(scale)
+        
+        self.opt_perf.set(self.defaults["perf_mode"])
+        
+        theme = self.defaults["theme"]
+        self.opt_theme.set(theme)
+        ctk.set_appearance_mode(theme)
+        
+        self.entry_width.delete(0, "end")
+        self.entry_width.insert(0, self.defaults["custom_width"])
+        
+        self.entry_height.delete(0, "end")
+        self.entry_height.insert(0, self.defaults["custom_height"])
+
+    def reset_settings(self):
+        """Resets ALL settings to their default values (including autosave)."""
+        if messagebox.askyesno("Reset All", "Are you sure you want to reset ALL settings (including autosave) to default?"):
+            # Apply defaults to state
+            self.autosave_enabled = self.defaults["autosave_enabled"]
+            self.autosave_dir = self.defaults["autosave_dir"]
+            
+            # Apply defaults to UI
+            self._apply_ui_defaults()
+            
+            # Update Settings window if open
+            if self.settings_window and self.settings_window.winfo_exists():
+                if self.autosave_enabled:
+                    self.check_autosave.select()
+                else:
+                    self.check_autosave.deselect()
+                
+                self.entry_dir.delete(0, "end")
+                self.entry_dir.insert(0, self.autosave_dir)
+                self._toggle_autosave_ui()
+
+            self._save_settings_to_disk()
+            messagebox.showinfo("Reset Complete", "All settings have been reset to defaults.")
+
+    def _on_closing(self):
+        """Handler for when the application is closing."""
+        self._save_settings_to_disk()
+        self.destroy()
 
     def open_settings(self):
         """Opens a window for application settings."""
@@ -564,7 +678,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.settings_window = ctk.CTkToplevel(self)
         self.settings_window.title("Settings")
-        self.settings_window.geometry("500x400")
+        self.settings_window.geometry("500x480")
         self.settings_window.resizable(False, False)
         
         # Ensure it stays on top and grabs focus
@@ -598,9 +712,15 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.btn_browse = ctk.CTkButton(self.frame_dir, text="Browse", width=80, command=self._browse_autosave_dir)
         self.btn_browse.pack(side="left", padx=(10, 0), pady=5)
 
+        # Reset Section
+        ctk.CTkLabel(main_frame, text="", height=10).pack() # Spacer
+        self.btn_reset = ctk.CTkButton(main_frame, text="Reset to Defaults", command=self.reset_settings,
+                                       fg_color="transparent", border_width=1, text_color=("gray20", "gray80"))
+        self.btn_reset.pack(padx=20, pady=10, anchor="w")
+
         # Buttons Frame
         btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        btn_frame.pack(pady=(30, 10), fill="x")
+        btn_frame.pack(side="bottom", pady=20, fill="x")
 
         self.btn_save_settings = ctk.CTkButton(btn_frame, text="Save Settings", command=self._save_settings,
                                                fg_color="#1f6aa5", hover_color="#144870")

@@ -11,6 +11,9 @@ class DummyCTk:
     def title(self, *args, **kwargs): pass
     def geometry(self, *args, **kwargs): pass
     def after(self, *args, **kwargs): pass
+    def protocol(self, *args, **kwargs): pass
+    def destroy(self, *args, **kwargs): pass
+    def winfo_exists(self, *args, **kwargs): return True
     def splitlist(self, data):
         if not data: return []
         if data.startswith('{') and data.endswith('}'):

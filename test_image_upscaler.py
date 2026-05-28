@@ -5,8 +5,35 @@ import numpy as np
 from unittest.mock import MagicMock, patch
 import sys
 
-sys.modules['customtkinter'] = MagicMock()
-sys.modules['tkinterdnd2'] = MagicMock()
+# Define dummy base classes to avoid metaclass conflict during testing
+class DummyCTk:
+    def __init__(self, *args, **kwargs): pass
+    def grid_columnconfigure(self, *args, **kwargs): pass
+    def grid_rowconfigure(self, *args, **kwargs): pass
+    def title(self, *args, **kwargs): pass
+    def geometry(self, *args, **kwargs): pass
+    def resizable(self, *args, **kwargs): pass
+    def attributes(self, *args, **kwargs): pass
+    def after(self, *args, **kwargs): pass
+    def mainloop(self, *args, **kwargs): pass
+    def protocol(self, *args, **kwargs): pass
+    def destroy(self, *args, **kwargs): pass
+    def winfo_exists(self, *args, **kwargs): return True
+
+class DummyDnDWrapper:
+    def __init__(self, *args, **kwargs): pass
+    def drop_target_register(self, *args, **kwargs): pass
+    def dnd_bind(self, *args, **kwargs): pass
+
+mock_ctk = MagicMock()
+mock_ctk.CTk = DummyCTk
+sys.modules['customtkinter'] = mock_ctk
+sys.modules['ctk'] = mock_ctk
+
+mock_dnd = MagicMock()
+mock_dnd.TkinterDnD.DnDWrapper = DummyDnDWrapper
+sys.modules['tkinterdnd2'] = mock_dnd
+
 sys.modules['torch'] = MagicMock()
 sys.modules['torchvision'] = MagicMock()
 sys.modules['torchvision.transforms'] = MagicMock()
