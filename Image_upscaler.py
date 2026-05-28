@@ -202,9 +202,9 @@ class UpscalerEngine:
         return img.resize(new_size, Image.Resampling.LANCZOS)
 
     def _upscale_pil(self, path, scale):
-        img = Image.open(path)
-        new_size = (int(img.width * scale), int(img.height * scale))
-        return img.resize(new_size, Image.Resampling.LANCZOS)
+        with Image.open(path) as img:
+            new_size = (int(img.width * scale), int(img.height * scale))
+            return img.resize(new_size, Image.Resampling.LANCZOS)
 
 
 # --- GUI Application ---
@@ -609,7 +609,16 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         if path:
             try:
                 target_dpi = self._get_valid_dpi()
-                self.output_image.save(path, dpi=(target_dpi, target_dpi))
+                save_img = self.output_image
+                
+                # Check for JPEG mode compatibility
+                if path.lower().endswith((".jpg", ".jpeg")) and save_img.mode == "RGBA":
+                    # Create white background for alpha channel
+                    background = Image.new("RGB", save_img.size, (255, 255, 255))
+                    background.paste(save_img, mask=save_img.split()[3]) # 3 is alpha channel
+                    save_img = background
+                
+                save_img.save(path, dpi=(target_dpi, target_dpi))
                 messagebox.showinfo("Saved", f"Image saved successfully to:\n{path}")
             except Exception as e:
                 messagebox.showerror("Save Error", f"Failed to save image: {e}")
