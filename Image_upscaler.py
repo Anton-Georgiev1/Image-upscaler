@@ -239,6 +239,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             "theme": "Dark",
             "custom_width": "",
             "custom_height": "",
+            "custom_dpi": "",
             "autosave_enabled": False,
             "autosave_dir": ""
         }
@@ -275,17 +276,31 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         # Custom Size Inputs (hidden initially)
         self.frame_custom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         
-        self.entry_width = ctk.CTkEntry(self.frame_custom, placeholder_text="Width", width=95)
+        # Row 1: Width x Height
+        self.f_size_row = ctk.CTkFrame(self.frame_custom, fg_color="transparent")
+        self.f_size_row.pack(fill="x")
+        
+        self.entry_width = ctk.CTkEntry(self.f_size_row, placeholder_text="Width", width=95)
         self.entry_width.pack(side="left", padx=(20, 2), pady=5)
         
-        self.btn_swap = ctk.CTkButton(self.frame_custom, text="⇄", width=30, height=28, 
+        self.btn_swap = ctk.CTkButton(self.f_size_row, text="⇄", width=30, height=28, 
                                       command=self.swap_custom_size,
                                       fg_color="transparent", border_width=1,
                                       hover_color=("#dbdbdb", "#2b2b2b"))
         self.btn_swap.pack(side="left", padx=2, pady=5)
         
-        self.entry_height = ctk.CTkEntry(self.frame_custom, placeholder_text="Height", width=95)
+        self.entry_height = ctk.CTkEntry(self.f_size_row, placeholder_text="Height", width=95)
         self.entry_height.pack(side="left", padx=(2, 20), pady=5)
+
+        # Row 2: DPI
+        self.f_dpi_row = ctk.CTkFrame(self.frame_custom, fg_color="transparent")
+        self.f_dpi_row.pack(fill="x")
+        
+        self.lbl_dpi = ctk.CTkLabel(self.f_dpi_row, text="Target DPI:", anchor="w")
+        self.lbl_dpi.pack(side="left", padx=(20, 5), pady=5)
+        
+        self.entry_dpi = ctk.CTkEntry(self.f_dpi_row, placeholder_text="DPI", width=70)
+        self.entry_dpi.pack(side="left", padx=5, pady=5)
 
         # Ensure frame_custom is in the right packing order even when hidden
         self.frame_custom.pack(padx=20, pady=5, fill="x")
@@ -390,6 +405,20 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         # Normalize path
         path = os.path.normpath(path)
         self.input_path = path
+        
+        # Detect source DPI
+        try:
+            with Image.open(path) as img:
+                dpi = img.info.get('dpi')
+                if dpi:
+                    self.entry_dpi.delete(0, "end")
+                    self.entry_dpi.insert(0, str(int(dpi[0])))
+                else:
+                    self.entry_dpi.delete(0, "end")
+                    self.entry_dpi.insert(0, "72")
+        except:
+            pass
+
         self.btn_run.configure(state="normal")
         self.btn_save.configure(state="disabled")
         self.show_preview(path)
@@ -531,7 +560,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
                     save_path = os.path.join(self.autosave_dir, f"{input_name}_upscaled_{counter}.png")
                     counter += 1
                 
-                self.output_image.save(save_path)
+                self.output_image.save(save_path, dpi=(int(self.entry_dpi.get()), int(self.entry_dpi.get())))
                 autosave_info = f"\n\nAutosaved to: {save_path}"
             except Exception as e:
                 messagebox.showerror("Autosave Error", f"Failed to autosave image: {e}")
@@ -557,7 +586,8 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
                                             filetypes=[("PNG", "*.png"), ("JPG", "*.jpg")])
         if path:
             try:
-                self.output_image.save(path)
+                target_dpi = int(self.entry_dpi.get())
+                self.output_image.save(path, dpi=(target_dpi, target_dpi))
                 messagebox.showinfo("Saved", f"Image saved successfully to:\n{path}")
             except Exception as e:
                 messagebox.showerror("Save Error", f"Failed to save image: {e}")
@@ -599,6 +629,9 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             
             self.entry_height.delete(0, "end")
             self.entry_height.insert(0, str(settings.get("custom_height", self.defaults["custom_height"])))
+
+            self.entry_dpi.delete(0, "end")
+            self.entry_dpi.insert(0, str(settings.get("custom_dpi", self.defaults["custom_dpi"])))
         except Exception as e:
             print(f"Error applying settings to UI: {e}")
 
@@ -612,6 +645,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             "theme": self.opt_theme.get(),
             "custom_width": self.entry_width.get(),
             "custom_height": self.entry_height.get(),
+            "custom_dpi": self.entry_dpi.get(),
             "autosave_enabled": self.autosave_enabled,
             "autosave_dir": self.autosave_dir
         }
@@ -651,6 +685,9 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         
         self.entry_height.delete(0, "end")
         self.entry_height.insert(0, self.defaults["custom_height"])
+
+        self.entry_dpi.delete(0, "end")
+        self.entry_dpi.insert(0, self.defaults["custom_dpi"])
 
     def reset_settings(self):
         """Resets ALL settings to their default values (including autosave)."""
