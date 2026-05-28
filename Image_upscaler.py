@@ -275,14 +275,17 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         # Custom Size Inputs (hidden initially)
         self.frame_custom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         
-        self.entry_width = ctk.CTkEntry(self.frame_custom, placeholder_text="Width", width=100)
-        self.entry_width.pack(side="left", padx=(20, 5), pady=5)
+        self.entry_width = ctk.CTkEntry(self.frame_custom, placeholder_text="Width", width=95)
+        self.entry_width.pack(side="left", padx=(20, 2), pady=5)
         
-        self.lbl_x = ctk.CTkLabel(self.frame_custom, text="x")
-        self.lbl_x.pack(side="left", pady=5)
+        self.btn_swap = ctk.CTkButton(self.frame_custom, text="⇄", width=30, height=28, 
+                                      command=self.swap_custom_size,
+                                      fg_color="transparent", border_width=1,
+                                      hover_color=("#dbdbdb", "#2b2b2b"))
+        self.btn_swap.pack(side="left", padx=2, pady=5)
         
-        self.entry_height = ctk.CTkEntry(self.frame_custom, placeholder_text="Height", width=100)
-        self.entry_height.pack(side="left", padx=(5, 20), pady=5)
+        self.entry_height = ctk.CTkEntry(self.frame_custom, placeholder_text="Height", width=95)
+        self.entry_height.pack(side="left", padx=(2, 20), pady=5)
 
         # Ensure frame_custom is in the right packing order even when hidden
         self.frame_custom.pack(padx=20, pady=5, fill="x")
@@ -411,6 +414,14 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             self.frame_custom.pack(pady=5, fill="x", after=self.opt_scale)
         else:
             self.frame_custom.pack_forget()
+
+    def swap_custom_size(self):
+        w = self.entry_width.get()
+        h = self.entry_height.get()
+        self.entry_width.delete(0, "end")
+        self.entry_width.insert(0, h)
+        self.entry_height.delete(0, "end")
+        self.entry_height.insert(0, w)
 
     def run_upscale(self):
         if not self.input_path: return

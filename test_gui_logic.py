@@ -30,7 +30,7 @@ mock_ctk = MagicMock()
 mock_ctk.CTk = DummyCTk
 mock_ctk.CTkFrame = MagicMock()
 mock_ctk.CTkLabel = MagicMock()
-mock_ctk.CTkEntry = MagicMock()
+mock_ctk.CTkEntry = MagicMock(side_effect=lambda *args, **kwargs: MagicMock())
 mock_ctk.CTkButton = MagicMock()
 mock_ctk.CTkOptionMenu = MagicMock()
 mock_ctk.CTkProgressBar = MagicMock()
@@ -128,3 +128,15 @@ def test_handle_drop_folder(app):
         
         app.load_image.assert_not_called()
         mock_warning.assert_called_once_with("Invalid Drop", "Please drop a file, not a folder.")
+
+def test_swap_custom_size(app):
+    """Test that swap_custom_size exchanges width and height values."""
+    app.entry_width.get.return_value = "100"
+    app.entry_height.get.return_value = "200"
+    
+    app.swap_custom_size()
+    
+    app.entry_width.delete.assert_called_with(0, "end")
+    app.entry_width.insert.assert_called_with(0, "200")
+    app.entry_height.delete.assert_called_with(0, "end")
+    app.entry_height.insert.assert_called_with(0, "100")
