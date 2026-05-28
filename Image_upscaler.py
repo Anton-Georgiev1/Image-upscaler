@@ -638,8 +638,11 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
                 print(f"Error loading settings: {e}")
 
         # Apply settings to state variables
-        self.autosave_enabled = settings.get("autosave_enabled", self.defaults["autosave_enabled"])
-        self.autosave_dir = settings.get("autosave_dir", self.defaults["autosave_dir"])
+        self.autosave_enabled = bool(settings.get("autosave_enabled", self.defaults["autosave_enabled"]))
+        
+        val_dir = settings.get("autosave_dir")
+        if val_dir is None: val_dir = self.defaults["autosave_dir"]
+        self.autosave_dir = str(val_dir)
 
         # Apply settings to UI widgets
         try:
