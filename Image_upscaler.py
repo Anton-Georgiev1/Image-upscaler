@@ -465,7 +465,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
             return 72
 
     def run_upscale(self):
-        if not self.input_path: return
+        if not self.input_path or self.is_processing: return
         
         # Check if input file still exists
         if not os.path.exists(self.input_path):
