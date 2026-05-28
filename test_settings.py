@@ -156,10 +156,12 @@ def test_autosave_counter_logic(app, tmp_path):
     (tmp_path / "test_upscaled_1.png").touch()
     
     with patch('Image_upscaler.messagebox.showinfo'):
+        # Ensure entry_dpi returns a predictable value
+        app.entry_dpi.get.return_value = "72"
         app._finish(MagicMock(), "test.png")
         
         expected_path = os.path.join(str(tmp_path), "test_upscaled_2.png")
-        app.output_image.save.assert_called_with(expected_path)
+        app.output_image.save.assert_called_with(expected_path, dpi=(72, 72))
 
 def test_reset_settings(app):
     """Test that reset_settings restores default values."""
@@ -181,7 +183,27 @@ def test_reset_settings(app):
         
         assert app.autosave_enabled == app.defaults["autosave_enabled"]
         assert app.autosave_dir == app.defaults["autosave_dir"]
+
+def test_reset_upscale_settings(app):
+    """Test that reset_upscale_settings restores UI defaults."""
+    # Mocking widgets
+    app.opt_model = MagicMock()
+    app.opt_scale = MagicMock()
+    app.opt_perf = MagicMock()
+    app.opt_theme = MagicMock()
+    app.entry_width = MagicMock()
+    app.entry_height = MagicMock()
+    app.entry_dpi = MagicMock()
+    
+    with patch('Image_upscaler.messagebox.askyesno', return_value=True), \
+         patch('Image_upscaler.messagebox.showinfo'), \
+         patch('Image_upscaler.Image_upscaler._save_settings_to_disk'):
+        app.reset_upscale_settings()
+        
         app.opt_model.set.assert_called_with(app.defaults["model"])
+        app.opt_scale.set.assert_called_with(app.defaults["scale"])
+        app.opt_perf.set.assert_called_with(app.defaults["perf_mode"])
+        app.opt_theme.set.assert_called_with(app.defaults["theme"])
 
 def test_on_closing(app):
     """Test that settings are saved on closing."""

@@ -140,3 +140,28 @@ def test_swap_custom_size(app):
     app.entry_width.insert.assert_called_with(0, "200")
     app.entry_height.delete.assert_called_with(0, "end")
     app.entry_height.insert.assert_called_with(0, "100")
+
+def test_get_valid_dpi_default(app):
+    """Test that _get_valid_dpi returns 72 if field is empty."""
+    app.entry_dpi.get.return_value = ""
+    assert app._get_valid_dpi() == 72
+
+def test_get_valid_dpi_numeric(app):
+    """Test that _get_valid_dpi returns the integer value."""
+    app.entry_dpi.get.return_value = "300"
+    assert app._get_valid_dpi() == 300
+
+def test_get_valid_dpi_invalid(app):
+    """Test that _get_valid_dpi returns 72 for invalid input."""
+    app.entry_dpi.get.return_value = "abc"
+    assert app._get_valid_dpi() == 72
+
+def test_run_upscale_dpi_validation(app):
+    """Test that run_upscale shows error for invalid DPI."""
+    app.input_path = "test.png"
+    app.entry_dpi.get.return_value = "abc"
+    
+    with patch('os.path.exists', return_value=True), \
+         patch('tkinter.messagebox.showerror') as mock_error:
+        app.run_upscale()
+        mock_error.assert_called_once_with("Invalid Input", "Please enter a valid positive number for DPI.")

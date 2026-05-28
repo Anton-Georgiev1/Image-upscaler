@@ -453,6 +453,17 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.entry_height.delete(0, "end")
         self.entry_height.insert(0, w)
 
+    def _get_valid_dpi(self):
+        """Safely parses DPI from entry, defaulting to 72 if empty."""
+        dpi_str = self.entry_dpi.get().strip()
+        if not dpi_str:
+            return 72
+        try:
+            dpi = int(dpi_str)
+            return dpi if dpi > 0 else 72
+        except ValueError:
+            return 72
+
     def run_upscale(self):
         if not self.input_path: return
         
@@ -465,6 +476,15 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         scale_val = self.opt_scale.get() 
         perf_mode = self.opt_perf.get()
         
+        # Validate DPI
+        dpi_val = self.entry_dpi.get().strip()
+        if dpi_val:
+            try:
+                if int(dpi_val) <= 0: raise ValueError()
+            except ValueError:
+                messagebox.showerror("Invalid Input", "Please enter a valid positive number for DPI.")
+                return
+
         custom_size = None
         if scale_val == "Custom Size":
             try:
@@ -561,7 +581,8 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
                     save_path = os.path.join(self.autosave_dir, f"{input_name}_upscaled_{counter}.png")
                     counter += 1
                 
-                self.output_image.save(save_path, dpi=(int(self.entry_dpi.get()), int(self.entry_dpi.get())))
+                target_dpi = self._get_valid_dpi()
+                self.output_image.save(save_path, dpi=(target_dpi, target_dpi))
                 autosave_info = f"\n\nAutosaved to: {save_path}"
             except Exception as e:
                 messagebox.showerror("Autosave Error", f"Failed to autosave image: {e}")
@@ -587,7 +608,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
                                             filetypes=[("PNG", "*.png"), ("JPG", "*.jpg")])
         if path:
             try:
-                target_dpi = int(self.entry_dpi.get())
+                target_dpi = self._get_valid_dpi()
                 self.output_image.save(path, dpi=(target_dpi, target_dpi))
                 messagebox.showinfo("Saved", f"Image saved successfully to:\n{path}")
             except Exception as e:
