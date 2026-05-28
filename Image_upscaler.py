@@ -103,16 +103,16 @@ class UpscalerEngine:
 
     def _upscale_ai(self, path, progress_callback=None, perf_mode="Responsive"):
         """Converts to tensor, runs PyTorch inference, converts back to Image. Preserves Alpha."""
-        img = Image.open(path)
-        has_alpha = img.mode == "RGBA"
-        
-        if has_alpha:
-            alpha = img.getchannel("A")
-            img = img.convert("RGB")
-        else:
-            img = img.convert("RGB")
+        with Image.open(path) as img:
+            has_alpha = img.mode == "RGBA"
+            
+            if has_alpha:
+                alpha = img.getchannel("A")
+                img = img.convert("RGB")
+            else:
+                img = img.convert("RGB")
 
-        img_tensor = ToTensor()(img).unsqueeze(0).to(self.device)
+            img_tensor = ToTensor()(img).unsqueeze(0).to(self.device)
         
         model = self._init_ai_model()
         scale = model.scale
