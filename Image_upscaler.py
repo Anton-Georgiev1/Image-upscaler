@@ -406,18 +406,19 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         path = os.path.normpath(path)
         self.input_path = path
         
-        # Detect source DPI
-        try:
-            with Image.open(path) as img:
-                dpi = img.info.get('dpi')
-                if dpi:
-                    self.entry_dpi.delete(0, "end")
-                    self.entry_dpi.insert(0, str(int(dpi[0])))
-                else:
-                    self.entry_dpi.delete(0, "end")
-                    self.entry_dpi.insert(0, "72")
-        except:
-            pass
+        # Detect source DPI - only if field is empty
+        if not self.entry_dpi.get().strip():
+            try:
+                with Image.open(path) as img:
+                    dpi = img.info.get('dpi')
+                    if dpi:
+                        self.entry_dpi.delete(0, "end")
+                        self.entry_dpi.insert(0, str(int(dpi[0])))
+                    else:
+                        self.entry_dpi.delete(0, "end")
+                        self.entry_dpi.insert(0, "72")
+            except:
+                pass
 
         self.btn_run.configure(state="normal")
         self.btn_save.configure(state="disabled")
@@ -660,8 +661,8 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
                 print(f"Failed to save settings to disk: {e}")
 
     def reset_upscale_settings(self):
-        """Resets only the upscale parameters (Model, Scale, Mode, Theme)."""
-        if messagebox.askyesno("Reset", "Reset upscale settings to defaults?"):
+        """Resets upscale parameters (Model, Scale, Mode, Theme, DPI) but preserves autosave."""
+        if messagebox.askyesno("Reset", "Reset upscale and UI settings to defaults?"):
             self._apply_ui_defaults()
             self._save_settings_to_disk()
             messagebox.showinfo("Reset", "Upscale settings reset to defaults.")
@@ -690,16 +691,13 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
         self.entry_dpi.insert(0, self.defaults["custom_dpi"])
 
     def reset_settings(self):
-        """Resets ALL settings to their default values (including autosave)."""
-        if messagebox.askyesno("Reset All", "Are you sure you want to reset ALL settings (including autosave) to default?"):
+        """Resets only the settings inside the Settings window (autosave)."""
+        if messagebox.askyesno("Reset Defaults", "Reset autosave settings to default?"):
             # Apply defaults to state
             self.autosave_enabled = self.defaults["autosave_enabled"]
             self.autosave_dir = self.defaults["autosave_dir"]
             
-            # Apply defaults to UI
-            self._apply_ui_defaults()
-            
-            # Update Settings window if open
+            # Update Settings window UI
             if self.settings_window and self.settings_window.winfo_exists():
                 if self.autosave_enabled:
                     self.check_autosave.select()
@@ -711,7 +709,7 @@ class Image_upscaler(ctk.CTk, TkinterDnD.DnDWrapper):
                 self._toggle_autosave_ui()
 
             self._save_settings_to_disk()
-            messagebox.showinfo("Reset Complete", "All settings have been reset to defaults.")
+            messagebox.showinfo("Reset Complete", "Autosave settings have been reset.")
 
     def _on_closing(self):
         """Handler for when the application is closing."""
